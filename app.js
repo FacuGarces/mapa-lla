@@ -56,7 +56,9 @@ function parse(){
   const st = {pk:'',view:'res',sec:'',mid:'',cam:0,ch:'dip',mtab:'conc'};
   if(p[0]==='nac'){ st.view='nac'; st.ch=p[1]==='sen'?'sen':'dip'; }
   else if(p[0]==='metodo'){ st.view='metodo'; }
+  else if(p[0]==='dudas'){ st.view='dudas'; st.pk=P[p[1]]?p[1]:''; st.dt=['per','not'].includes(p[2])?p[2]:''; }
   else if(p[0]==='m' && S.munis[p[1]+'/'+p[2]]){ st.pk=p[1]; st.view='conc'; st.mid=p[1]+'/'+p[2]; st.sec=S.munis[st.mid].sec||''; st.mtab=p[3]||'conc'; }
+  else if(p[0]==='p' && P[p[1]] && p[2]==='dudas'){ st.view='dudas'; st.pk=p[1]; st.dt=''; }
   else if(p[0]==='p' && P[p[1]]){
     const pr=P[p[1]]; st.pk=p[1];
     st.view = ['conc','leg','nac'].includes(p[2]) ? p[2] : defaultView(p[1]);
@@ -73,6 +75,7 @@ function parse(){
 function defaultView(pk){ return P[pk].munis.length ? 'conc' : P[pk].leg ? 'leg' : 'nac'; }
 function hashOf(st){
   if(st.view==='metodo') return '#/metodo';
+  if(st.view==='dudas') return '#/dudas/'+(st.pk||'todas')+(st.dt?'/'+st.dt:'');
   if(!st.pk) return st.view==='nac' ? '#/nac/'+st.ch : '#/';
   let h='#/p/'+st.pk+'/'+st.view;
   if(st.view==='conc'){ if(st.mid) h+='/m/'+st.mid.split('/')[1]+(st.mtab!=='conc'?'/'+st.mtab:''); else if(st.sec) h+='/sec/'+encodeURIComponent(st.sec); }
@@ -82,6 +85,7 @@ function hashOf(st){
 function go(h){ if(location.hash===h) render(); else location.hash=h; }
 function set(patch){ go(hashOf({...S.st,...patch})); }
 function pickProvince(pk){
+  if(S.st.view==='dudas'){ set({pk}); return; }
   if(!pk){ set({pk:'',view:S.st.view==='nac'?'nac':'res',sec:'',mid:''}); return; }
   const cur=S.st.view, pr=P[pk];
   let view = (cur==='leg'&&pr.leg)||(cur==='nac') ? cur : (cur==='conc'&&pr.munis.length) ? 'conc' : defaultView(pk);
@@ -128,6 +132,7 @@ function clearLayers(){ [provLayer,deptoLayer,markerLayer].forEach(l=>l&&map.rem
 
 function drawMap(){
   clearLayers(); const st=S.st;
+  if(st.view==='dudas'){ drawDudas(); return; }
   if(!st.pk){ drawCountry(); return; }
   const p=P[st.pk]; const pf=S.prov.features.find(f=>f.properties.in1===p.code);
   const pb=L.geoJSON(pf).getBounds();
@@ -217,22 +222,27 @@ function openDD(d){ closeDD(d); if(isMobile() && S.snap!=='full') snap('full',tr
 function moveAct(d,dir){ const lis=[...d.querySelectorAll('li[data-v]')]; if(!lis.length) return; let i=lis.findIndex(l=>l.classList.contains('act')); lis.forEach(l=>l.classList.remove('act')); i=(i+dir+lis.length)%lis.length; lis[i].classList.add('act'); lis[i].scrollIntoView({block:'nearest'}); }
 function chooseDD(d,v){ const id=d.dataset.dd; closeDD(); DD[id].pick(v); }
 
-function seg(key,items,val,label){ return `<div>${label?`<span class="lbl">${esc(label)}</span>`:''}<div class="seg" role="tablist" aria-label="${esc(label||key)}">${items.map(([v,t,n])=>`<button type="button" role="tab" data-seg="${key}" data-v="${esc(v)}" aria-selected="${v===val}"><span class="t">${esc(t)}</span>${n!=null?`<span class="n">${n} ${n===1?'persona':'personas'}</span>`:''}</button>`).join('')}</div></div>`; }
+function seg(key,items,val,label){ return `<div>${label?`<span class="lbl">${esc(label)}</span>`:''}<div class="seg" role="tablist" aria-label="${esc(label||key)}">${items.map(([v,t,n])=>`<button type="button" role="tab" data-seg="${key}" data-v="${esc(v)}" aria-selected="${v===val}"><span class="t">${esc(t)}</span>${n!=null?`<span class="n">${n}${items.length>3?'':' '+((key==='dt'||v==='dudas')?(n===1?'pendiente':'pendientes'):(n===1?'persona':'personas'))}</span>`:''}</button>`).join('')}</div></div>`; }
 
 // ---------- nav (always-visible controls)
 function renderNav(){
   const st=S.st; let h='';
   const popts=[{v:'',t:'Toda Argentina',n:st.view==='nac'&&!st.pk?sum(allProv(),k=>nacCount(k,st.ch)):sum(allProv(),provTotal)}]
     .concat(allProv().sort((a,b)=>P[a].name.localeCompare(P[b].name)).map(k=>({v:k,t:P[k].name,n:provTotal(k)})));
+  if(st.pk) h+=`<button type="button" class="to-arg" data-arg="1">${I.back}Volver a toda Argentina</button>`;
   h+=dd('prov','Provincia',popts,st.pk,{search:true,sph:'Buscar provincia…',pick:pickProvince});
-  if(!st.pk){
-    if(st.view!=='metodo') h+=seg('view',[['res','Resumen país',null],['nac','Congreso Nacional',sum(allProv(),k=>nacCount(k))]],st.view,'Qué ver');
+  if(st.view==='dudas'){
+    const D=dudas(st.pk);
+    h+=seg('view',[['res',st.pk?P[st.pk].name:'Resumen',null],['dudas','Dudas',D.length]],'dudas','Qué ver');
+  } else if(!st.pk){
+    if(st.view!=='metodo') h+=seg('view',[['res','Resumen',null],['nac','Congreso',sum(allProv(),k=>nacCount(k))],['dudas','Dudas',dudas().length]],st.view,'Qué ver');
     if(st.view==='nac') h+=seg('ch',[['dip','Diputados',sum(allProv(),k=>nacCount(k,'dip'))],['sen','Senadores',sum(allProv(),k=>nacCount(k,'sen'))]],st.ch,'Cámara');
   } else {
     const p=P[st.pk]; const items=[];
     if(p.munis.length) items.push(['conc',st.pk==='buenos-aires'?'Municipios':'Concejos',concCount(st.pk)]);
     if(p.leg) items.push(['leg','Legislatura',legCount(st.pk)]);
     items.push(['nac','Congreso',nacCount(st.pk)]);
+    items.push(['dudas','Dudas',dudas(st.pk).length]);
     h+=seg('view',items,st.view,'Qué ver en '+p.name);
     if(st.view==='conc'){
       let ms=p.munis.map(id=>S.munis[id]); if(st.sec) ms=ms.filter(m=>m.sec===st.sec);
@@ -257,13 +267,14 @@ function render(){
   renderNav();
   const st=S.st;
   if(st.view==='metodo') renderMethod();
+  else if(st.view==='dudas') renderDudas();
   else if(!st.pk) st.view==='nac' ? renderNacAll() : renderCountry();
   else if(st.view==='conc') st.mid ? renderMuni(st.mid) : renderConcList(st.pk);
   else if(st.view==='leg') renderLeg(st.pk);
   else renderProvNac(st.pk);
   $('#body').scrollTop=0;
   if(isMobile()){ const pn=$('#panel'); layoutSheet();
-    const deep = st.mid || st.view==='leg' || st.view==='nac' || st.view==='metodo';
+    const deep = st.mid || st.view==='leg' || st.view==='nac' || st.view==='metodo' || st.view==='dudas';
     if(deep && S.snap==='peek') snap('mid',true);
     pn.scrollTop = deep && S.lastHash!==undefined ? Math.max(0,$('#body').offsetTop-26) : 0; }
   S.lastHash=location.hash;
@@ -280,7 +291,8 @@ function renderCountry(){
   <section class="zone"><h2>Argentina</h2><p class="sub">Elegí una provincia en el mapa o en el menú de arriba. Adentro de cada provincia podés ver sus concejos, su legislatura y sus representantes en el Congreso.</p></section>
   <section class="zone"><h3>Representantes LLA en todo el país</h3><div class="kpis">
     ${kpi(nac,'En el Congreso Nacional','', '#/nac/dip')}${kpi(leg,'En legislaturas provinciales')}${kpi(conc,'En concejos deliberantes')}
-    ${kpi(ce,'Consejeros escolares (PBA)')}${kpi(dis,'Disidentes (ex LLA)')}${kpi(q,'Casos a confirmar','q')}</div></section>
+    ${kpi(ce,'Consejeros escolares (PBA)')}${kpi(dis,'Disidentes (ex LLA)')}${kpi(q,'Casos a confirmar','q','#/dudas/todas')}</div></section>
+  <section class="zone"><a class="method-card" href="#/metodo">${I.info}<span><b>¿Cómo se armó este mapa?</b><br>Qué cuenta como LLA, aliado o disidente, de dónde salen los datos y qué significa cada duda.</span>${I.chev}</a></section>
   <section class="zone"><h3>Provincias · LLA y aliados</h3><ul class="rows">${rows.map(([k,p,v])=>`<li class="row" tabindex="0" data-pk="${k}"><div class="lft"><div class="nm">${esc(p.name)}</div><div class="meta">${p.munis.length?p.munis.length+' concejos relevados':'Legislatura y Congreso'}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`).join('')}</ul></section>`;
 }
 function provHead(pk){
@@ -302,7 +314,7 @@ function renderLeg(pk){
   const p=P[pk], c=p.leg.cam[S.st.cam];
   $('#body').innerHTML = provHead(pk) + `<section class="zone"><h3>${/^legislatura/i.test(camClean(c.n))?'Legislatura (unicameral)':'Legislatura · '+esc(camClean(c.n))}</h3>
     <dl class="info" style="margin:0 0 12px">${c.tot?`<dt>Bancas</dt><dd class="num">${c.tot}</dd>`:''}${c.tel?`<dt>Teléfono</dt><dd>${esc(c.tel)}</dd>`:''}${c.src?`<dt>Fuente</dt><dd>${srcLink(c.src)}</dd>`:''}</dl>
-    ${cnt(c.bl)?blocsHTML(c.bl):'<div class="empty">Sin legisladores LLA ni aliados con los filtros actuales.</div>'}${othersHTML(c.ot)}</section>${p.leg.dudas&&p.leg.dudas.length?`<section class="zone">${dudasHTML(p.leg.dudas)}</section>`:''}`;
+    ${cnt(c.bl)?blocsHTML(c.bl):'<div class="empty">Sin legisladores LLA ni aliados con los filtros actuales.</div>'}${othersHTML(c.ot)}</section>${p.leg.dudas&&p.leg.dudas.length?`<section class="zone">${dudasHTML(p.leg.dudas)}</section>`:''}${p.leg.cx&&p.leg.cx.length?`<section class="zone">${ctxHTML(p.leg.cx)}</section>`:''}`;
 }
 function renderProvNac(pk){
   const ch=S.st.ch; const list=nacList(pk,ch);
@@ -320,18 +332,19 @@ function renderMuni(id){
   const m=S.munis[id], st=S.st, tab=st.mtab, es=ESTADO[m.es]||['','b-src'];
   const qList=[]; m.bl.forEach(b=>b.m.forEach(x=>{ if(x.q) qList.push(x); }));
   const ceN=m.ce?cnt(m.ce):0;
-  const tabs=[['conc','Concejo',cnt(m.bl),'']]; if(m.ce) tabs.push(['ce','Consejo escolar',ceN,'']); tabs.push(['du','Dudas',qList.length+m.du.length,'q']);
+  const tabs=[['conc','Concejo',cnt(m.bl),'']]; if(m.ce) tabs.push(['ce','Consejo escolar',ceN,'']); tabs.push(['du','Dudas',qList.length,'q']);
   let h=`<section class="zone"><button type="button" class="back" data-back="1">${I.back}${m.pv==='buenos-aires'?(st.sec?st.sec+' sección':'Todos los municipios'):'Todas las ciudades de '+esc(P[m.pv].name)}</button>
     <h2>${esc(m.n)}</h2><p class="sub">${esc(m.cu||'Concejo Deliberante')}${m.tot?` · ${m.tot} bancas`:''}${m.sec?` · ${esc(m.sec)} sección`:''} · <span class="badge ${es[1]}">${esc(es[0])}</span></p>
-    <dl class="info">${m.tel?`<dt>Teléfono</dt><dd><a href="tel:${esc(m.tel)}">${esc(m.tel)}</a></dd>`:''}${m.em?`<dt>Correo</dt><dd><a href="mailto:${esc(m.em)}">${esc(m.em)}</a></dd>`:''}${m.dir?`<dt>Dirección</dt><dd>${esc(m.dir)}</dd>`:''}${m.web?`<dt>Web</dt><dd>${srcLink(m.web)}</dd>`:''}${m.src&&m.src!==m.web?`<dt>Fuente</dt><dd>${srcLink(m.src)}</dd>`:''}</dl></section>
+    <dl class="info">${m.tel?`<dt>Teléfono</dt><dd><a href="tel:${esc(m.tel)}">${esc(m.tel)}</a></dd>`:''}${m.em?`<dt>Correo</dt><dd><a href="mailto:${esc(m.em)}">${esc(m.em)}</a></dd>`:''}${m.dir?`<dt>Dirección</dt><dd>${esc(m.dir)}</dd>`:''}${m.web?`<dt>Web</dt><dd>${srcLink(m.web)}</dd>`:''}${m.src&&m.src!==m.web?`<dt>Fuente</dt><dd>${srcLink(m.src)}</dd>`:''}</dl>${ctxHTML(m.cx)}</section>
   <section class="zone"><div class="mtabs" role="tablist">${tabs.map(([v,t,n,c])=>`<button type="button" role="tab" data-mtab="${v}" aria-selected="${tab===v}">${t}<span class="n ${c}">${n}</span></button>`).join('')}</div>`;
   if(tab==='ce' && m.ce){ h+= ceN?blocsHTML(m.ce):'<div class="empty">Sin consejeros con los filtros actuales.</div>'; h+=`<p class="sub" style="margin-top:8px">Consejeros electos por lista (Junta Electoral PBA); bloque actual no verificado.</p>`; }
-  else if(tab==='du'){ h+= (qList.length||m.du.length)?`<ul class="dlist">${qList.map(x=>`<li>${I.q}<div><b>${esc(x.n)}</b> — ${esc(x.qd||'A confirmar')}</div></li>`).join('')}${m.du.map(d=>`<li>${I.q}<div>${linkify(d)}</div></li>`).join('')}</ul>`:'<div class="empty">Sin dudas abiertas.</div>'; }
+  else if(tab==='du'){ h+= qList.length?`<ul class="dlist">${qList.map(x=>`<li>${I.q}<div><b>${esc(x.n)}</b> — ${esc(x.qd||'No sabemos si sigue en el bloque LLA.')}</div></li>`).join('')}</ul>`:'<div class="empty">No hay personas a confirmar.</div>'; }
   else { h+= cnt(m.bl)?blocsHTML(m.bl):`<div class="empty">${m.bl.length?'Nadie con los filtros actuales.':'Sin representantes LLA ni aliados relevados en este concejo.'}</div>`; h+=othersHTML(m.ot); }
   $('#body').innerHTML=h+'</section>';
 }
 function othersHTML(ot){ if(!ot||!ot.length) return ''; return `<h3 style="margin-top:14px">Otros bloques (no relevados)</h3><div class="others">${ot.map(o=>`<span>${esc(o.bloque)}${o.bancas?` · ${o.bancas}`:''}</span>`).join('')}</div>`; }
-function dudasHTML(d){ return `<h3>Notas</h3><ul class="dlist">${d.map(x=>`<li>${I.q}<div>${linkify(x)}</div></li>`).join('')}</ul>`; }
+function ctxHTML(c){ if(!c||!c.length) return ''; return `<details class="ctx"><summary>Contexto y fuentes (${c.length})</summary><ul class="dlist">${c.map(x=>`<li>${I.info}<div>${linkify(x)}</div></li>`).join('')}</ul></details>`; }
+function dudasHTML(d){ return `<h3>Dudas</h3><ul class="dlist">${d.map(x=>`<li>${I.q}<div>${linkify(x)}</div></li>`).join('')}</ul>`; }
 function blocsHTML(bl,nac){
   const order={LLA:0,posible_aliado:1,disidente:2};
   return bl.slice().sort((a,b)=>order[a.k]-order[b.k]||b.m.length-a.m.length).map(b=>{ const ms=b.m.filter(x=>vis(x,b.k)); if(!ms.length) return '';
@@ -349,13 +362,68 @@ function personHTML(x,nac){
 }
 function srcLink(u){ const s=String(u); const m=s.match(/https?:\/\/[^\s)]+/); if(!m) return esc(s); let host=''; try{host=new URL(m[0]).hostname.replace(/^www\./,'');}catch(e){host=m[0];} return `<a href="${esc(m[0])}" target="_blank" rel="noopener">${esc(host)}</a>`; }
 function linkify(s){ return esc(s).replace(/(https?:\/\/[^\s)]+)/g,u=>{ let h=u; try{h=new URL(u.replace(/&amp;/g,'&')).hostname.replace(/^www\./,'');}catch(e){} return `<a href="${u}" target="_blank" rel="noopener">${h}</a>`; }); }
+// ---------- dudas (all doubts grouped)
+let DCACHE=null;
+function dudasAll(){
+  if(DCACHE) return DCACHE; const out=[];
+  const sur=n=>norm(String(n).split(',')[0].replace(/["“”]/g,'')).split(/\s+/).filter(w=>w.length>=4);
+  // one entry per person; notes that mention someone are attached to that person; the rest stay as notes of the place
+  const place=(pk,pl,href,members)=>{ members.forEach(([x,b])=>{ if(x.q) out.push({pk,place:pl,href,n:x.n,b,txt:[x.qd||'No sabemos si sigue en el bloque LLA.'],src:x.s||''}); }); };
+  const mem=bl=>{ const r=[]; (bl||[]).forEach(b=>b.m.forEach(x=>r.push([x,b.b]))); return r; };
+  allProv().forEach(pk=>{ const p=P[pk];
+    p.munis.forEach(id=>{ const m=S.munis[id];
+      place(pk,(pk==='buenos-aires'&&m.sec?`${m.n} (${m.sec} sección)`:m.n),`#/p/${pk}/conc/m/${id.split('/')[1]}`,mem(m.bl).concat(mem(m.ce))); });
+    if(p.leg){ p.leg.cam.forEach((c,i)=>place(pk,'Legislatura · '+camShort(c.n),`#/p/${pk}/leg/${i}`,mem(c.bl))); }
+    ['dip','sen'].forEach(ch=>place(pk,ch==='dip'?'Diputados nacionales':'Senadores nacionales',`#/p/${pk}/nac/${ch}`,p[ch].map(x=>[x,x.bl])));
+  });
+  DCACHE=out; return out;
+}
+function dudas(pk){ return dudasAll().filter(x=>!pk||x.pk===pk); }
+function renderDudas(){
+  const st=S.st; const D=dudas(st.pk);
+  const byP={}; D.forEach(x=>{ ((byP[x.pk]=byP[x.pk]||{})[x.place]=byP[x.pk][x.place]||{href:x.href,it:[]}).it.push(x); });
+  const provs=Object.keys(byP).sort((a,b)=>dudas(b).length-dudas(a).length||P[a].name.localeCompare(P[b].name));
+  const nPer=D.filter(x=>x.n).length, nGen=D.length-nPer;
+  let h=`<section class="zone"><h2>Dudas${st.pk?' · '+esc(P[st.pk].name):''}</h2>
+   <p class="sub">${D.length} ${D.length===1?'persona':'personas'}${st.pk?'':' en todo el país'} de las que no sabemos si siguen en LLA.</p>
+   <div class="hint">${I.info}<span>Son electos por listas de LLA (2023 y 2025) cuyo bloque actual no pudimos confirmar en ninguna fuente. Tocá un lugar para ir a su ficha.</span></div>
+   <div class="search" style="margin-top:10px"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="dq" type="search" placeholder="Filtrar por nombre, lugar o motivo" aria-label="Filtrar dudas" autocomplete="off"></div></section>`;
+  if(!D.length) h+='<div class="empty">Sin dudas abiertas.</div>';
+  provs.forEach(pk=>{ const places=byP[pk]; const tot=Object.values(places).reduce((a,p)=>a+p.it.length,0);
+    h+=`<section class="zone dprov"><details ${st.pk||provs.length<=3?'open':''}><summary class="dsum"><span>${esc(P[pk].name)}</span><span class="cnt-q">${tot}</span></summary>`;
+    Object.entries(places).sort((a,b)=>b[1].it.length-a[1].it.length||a[0].localeCompare(b[0])).forEach(([pl,o])=>{
+      const its=o.it.slice().sort((a,b)=>(b.n?1:0)-(a.n?1:0));
+      h+=`<div class="dplace"><a class="dpl" href="${o.href}">${esc(pl)}<span class="cnt">${its.length}</span>${I.chev}</a><ul class="dlist">`+
+        its.map(x=>`<li data-t="${esc(norm((x.n||'')+' '+pl+' '+x.txt.join(' ')+' '+P[pk].name))}">${x.n?I.q:I.info}<div>${x.n?`<b>${esc(x.n)}</b> <span class="sub">· ${esc(x.b||'')}</span>`:'<b class="sub">Sobre el lugar</b>'}${x.txt.map(t=>`<div class="dtx">${linkify(t)}</div>`).join('')}${x.src&&x.n?`<div class="sub">Fuente: ${srcLink(x.src)}</div>`:''}</div></li>`).join('')+`</ul></div>`; });
+    h+='</details></section>'; });
+  $('#body').innerHTML=h;
+  const q=$('#dq'); q.addEventListener('input',()=>{ const v=norm(q.value.trim()); document.querySelectorAll('#body .dlist li').forEach(li=>li.hidden=v&&!li.dataset.t.includes(v));
+    document.querySelectorAll('#body .dplace').forEach(d=>d.hidden=![...d.querySelectorAll('li')].some(li=>!li.hidden));
+    document.querySelectorAll('#body .dprov').forEach(d=>{ const vis=[...d.querySelectorAll('.dplace')].some(x=>!x.hidden); d.hidden=!vis; if(v&&vis) d.querySelector('details').open=true; }); });
+}
+function drawDudas(){
+  const st=S.st;
+  if(st.pk){ const p=P[st.pk]; const pf=S.prov.features.find(f=>f.properties.in1===p.code);
+    provLayer=L.geoJSON(pf,{style:{fillColor:'#FDE68A',fillOpacity:.7,color:'#92400E',weight:2},interactive:false}).addTo(map);
+    setLegend(`<h4>Dudas en ${esc(p.name)}</h4><div class="sw"><i style="background:#FDE68A"></i><span><b class="num">${dudas(st.pk).length}</b> pendientes</span></div><div class="sub">El detalle está en el panel.</div>`);
+    fit(L.geoJSON(pf).getBounds(),10); return; }
+  const vals={}; let max=0; allProv().forEach(k=>{ vals[k]=dudas(k).length; max=Math.max(max,vals[k]); });
+  const qr=['#FFFBEB','#FEF3C7','#FDE68A','#FBBF24','#F59E0B','#B45309'];
+  const col=v=>{ if(!v) return qr[0]; const t=Math.log(1+v)/Math.log(1+Math.max(1,max)); return qr[1+Math.min(4,Math.floor(t*4.999))]; };
+  provLayer=L.geoJSON(S.prov,{style:f=>({fillColor:col(vals[pkByCode(f.properties.in1)]),fillOpacity:.9,color:'#fff',weight:1.2}),
+    onEachFeature:(f,l)=>{ const k=pkByCode(f.properties.in1); const h=()=>`<b>${esc(P[k].name)}</b>${vals[k]} dudas pendientes`;
+      l.on({mouseover:e=>{l.setStyle({weight:3,color:'#92400E'}); tip(e,h());},mousemove:e=>tip(e,h()),mouseout:()=>{provLayer.resetStyle(l); tip(null);},click:()=>set({pk:k})}); }}).addTo(map);
+  let lg=`<h4>Dudas por provincia</h4><div class="sw"><i style="background:${qr[0]}"></i><span class="num">0</span></div>`;
+  binsLabel(max||1).forEach(([a,b],i)=>{ if(a<=b) lg+=`<div class="sw"><i style="background:${qr[i+1]}"></i><span class="num">${a===b?a:a+'–'+b}</span></div>`; });
+  setLegend(lg+'<div class="sub">Personas a confirmar + notas.</div>'); fit(ARG,6);
+}
 function renderMethod(){
   $('#body').innerHTML=`<section class="zone"><button type="button" class="back" data-go="#/">${I.back}Volver al mapa</button><h2>Cómo se armó</h2>
   <p class="sub" style="margin-bottom:10px">Corte: ${esc(S.core.gen)}.</p>
   <ul class="dlist">
    <li>${I.LLA}<div><b>LLA</b>: integra hoy un bloque con nombre La Libertad Avanza según la web oficial del cuerpo, boletín oficial o crónica de la sesión.</div></li>
    <li>${I.posible_aliado}<div><b>Posible aliado</b>: PRO, Juntos por el Cambio, vecinales, liberales o libertarios no-LLA, socios de las alianzas electorales con LLA y listas conjuntas. Se excluyen UCR y bloques de gobernadores dialoguistas.</div></li>
-   <li>${I.disidente}<div><b>Disidente</b>: electo/a por una lista de LLA que hoy integra otro bloque.</div></li>
+   <li>${I.disidente}<div><b>Disidente</b>: electo por una lista de LLA que hoy integra otro bloque.</div></li>
    <li>${I.q}<div><b>A confirmar</b>: electos por listas LLA (2023 y 2025) cuyo bloque actual no figura en ninguna fuente accesible. Cada ficha explica la duda.</div></li>
    <li>${I.link}<div><b>Fuentes</b>: Cámara de Diputados y Senado de la Nación, legislaturas, legislaturasconectadas.gob.ar, webs de los concejos, Junta Electoral PBA, tribunales electorales provinciales, SIBOM y prensa local 2025-2026.</div></li>
    <li>${I.tel}<div>Solo se publica contacto institucional (teléfono del cuerpo, correo oficial, redes declaradas).</div></li>
@@ -385,8 +453,10 @@ function bindUI(){
     const li=e.target.closest('.dd-pop li[data-v]'); if(li){ chooseDD(li.closest('.dd'),li.dataset.v); return; }
     if(!e.target.closest('.dd')) closeDD();
     const sg=e.target.closest('[data-seg]'); if(sg){ const k=sg.dataset.seg, v=sg.dataset.v;
-      if(k==='view') set({view:v,sec:'',mid:'',cam:0,mtab:'conc'}); else if(k==='cam') set({cam:+v}); else if(k==='ch') set({ch:v}); return; }
+      if(k==='view'){ if(v==='res'&&S.st.pk) set({view:defaultView(S.st.pk),sec:'',mid:'',cam:0,mtab:'conc'}); else set({view:v,sec:'',mid:'',cam:0,mtab:'conc',dt:''}); }
+      else if(k==='dt') set({dt:v}); else if(k==='cam') set({cam:+v}); else if(k==='ch') set({ch:v}); return; }
     const mt=e.target.closest('[data-mtab]'); if(mt){ set({mtab:mt.dataset.mtab}); return; }
+    const ta=e.target.closest('[data-arg]'); if(ta){ go(S.st.view==='dudas'?'#/dudas/todas':S.st.view==='nac'?'#/nac/'+S.st.ch:'#/'); return; }
     const bk=e.target.closest('[data-back]'); if(bk){ set({mid:'',mtab:'conc'}); return; }
     const pk=e.target.closest('[data-pk]'); if(pk){ pickProvince(pk.dataset.pk); return; }
     const md=e.target.closest('[data-mid]'); if(md){ const m=S.munis[md.dataset.mid]; set({mid:m.id,sec:m.sec||'',mtab:'conc'}); return; }
@@ -413,8 +483,8 @@ function buildSearch(){
   const idx=[];
   allProv().forEach(k=>{ const p=P[k]; idx.push({t:p.name,s:'Provincia',h:'#/p/'+k+'/'+defaultView(k),kind:'Provincia'});
     if(p.leg) p.leg.cam.forEach((c,i)=>c.bl.forEach(b=>b.m.forEach(x=>idx.push({t:x.n,s:`${b.b} · Legislatura (${camShort(c.n)}) · ${p.name}`,h:`#/p/${k}/leg/${i}`,kind:KL[b.k]}))));
-    p.dip.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Diputado/a nacional · ${p.name}`,h:`#/p/${k}/nac/dip`,kind:KL[x.k]}));
-    p.sen.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Senador/a nacional · ${p.name}`,h:`#/p/${k}/nac/sen`,kind:KL[x.k]})); });
+    p.dip.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Diputado nacional · ${p.name}`,h:`#/p/${k}/nac/dip`,kind:KL[x.k]}));
+    p.sen.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Senador nacional · ${p.name}`,h:`#/p/${k}/nac/sen`,kind:KL[x.k]})); });
   Object.values(S.munis).forEach(m=>{ const pn=P[m.pv].name, base=`#/p/${m.pv}/conc/m/${m.id.split('/')[1]}`; idx.push({t:m.n,s:`Concejo · ${pn}`,h:base,kind:'Municipio'});
     m.bl.forEach(b=>b.m.forEach(x=>idx.push({t:x.n,s:`${b.b} · Concejo de ${m.n} (${pn})`,h:base,kind:KL[b.k]})));
     (m.ce||[]).forEach(b=>b.m.forEach(x=>idx.push({t:x.n,s:`Consejo escolar · ${m.n}`,h:base+'/ce',kind:'Consejero'}))); });

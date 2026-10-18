@@ -26,7 +26,8 @@ button{font:inherit;color:inherit}
 .grip{display:none}
 .ph{flex:none;padding:14px 16px 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--v50),#fff 80%)}
 .brand{display:flex;gap:10px;align-items:center;margin-bottom:12px}
-.brand-mark{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--v600),var(--v900));display:grid;place-items:center;box-shadow:var(--sh2);flex:none}
+.brand-mark{width:40px;height:40px;border-radius:11px;background:#371859;display:grid;place-items:center;box-shadow:var(--sh2);flex:none;overflow:hidden}
+.brand-mark img{width:88%;height:88%;object-fit:contain;display:block}
 .brand-mark svg{width:20px;height:20px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .brand-t{flex:1;min-width:0}
 .brand h1{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em;color:var(--v900);line-height:1.2}
@@ -216,7 +217,7 @@ details.more summary::-webkit-details-marker{display:none}
   .grip span{width:44px;height:5px;border-radius:999px;background:#CFC8E3}
   .ph{padding:0 14px 10px;touch-action:pan-y}
   .brand{margin-bottom:8px}
-  .brand-mark{width:30px;height:30px;border-radius:9px} .brand-mark svg{width:17px;height:17px}
+  .brand-mark{width:34px;height:34px;border-radius:9px}
   .brand h1{font-size:15px}
   .brand p{display:none}
   .brand{margin-bottom:6px}
@@ -234,3 +235,37 @@ details.more summary::-webkit-details-marker{display:none}
   .reopen{display:none!important}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+
+/* dudas section */
+.dprov{padding:4px 16px}
+.dsum{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;cursor:pointer;font-weight:700;font-size:15px;color:var(--v900);list-style:none}
+.dsum::-webkit-details-marker{display:none}
+.dsum::after{content:"";width:8px;height:8px;border-right:2px solid var(--ink3);border-bottom:2px solid var(--ink3);transform:rotate(45deg);margin-left:6px;transition:transform .2s}
+details[open]>.dsum::after{transform:rotate(-135deg)}
+.dsum span:first-child{flex:1}
+.cnt-q{font-family:"Fira Code",monospace;font-size:12px;background:var(--q-bg);color:var(--q);border:1px solid var(--q-bd);padding:0 8px;border-radius:999px}
+.dplace{margin:0 0 10px;padding:8px 10px;border-radius:12px;background:#FCFBFE;border:1px solid var(--line)}
+.dpl{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13.5px;color:var(--v800);text-decoration:none;padding:2px 0 4px}
+.dpl .cnt{margin-left:auto;font-family:"Fira Code",monospace;font-size:12px;color:var(--ink3)}
+.dpl:hover{color:var(--v900)}
+.dplace .dlist li{padding:6px 0;font-size:12.5px}
+.dplace .dlist li .ic{flex:none}
+
+.to-arg{display:inline-flex;align-items:center;gap:4px;align-self:flex-start;height:32px;padding:0 12px 0 8px;border-radius:999px;border:1px solid var(--v300);background:#fff;color:var(--v800);font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--sh1);margin-bottom:-2px}
+.to-arg:hover{background:var(--v50)}
+.dtx{margin-top:3px}
+
+details.ctx{margin-top:12px}
+details.ctx summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--v700);list-style:none}
+details.ctx summary::-webkit-details-marker{display:none}
+details.ctx .dlist li .ic{color:var(--v600)}
+
+.info-btn{display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 12px;border-radius:11px;border:1px solid var(--line);background:#fff;color:var(--v800);font-size:13px;font-weight:600;text-decoration:none;box-shadow:var(--sh1);white-space:nowrap}
+.info-btn:hover{background:var(--v50);border-color:var(--v300);color:var(--v900)}
+.method-card{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:var(--v50);border:1px solid var(--v100);color:var(--ink2);text-decoration:none;font-size:13px;line-height:1.4}
+.method-card b{color:var(--v900);font-size:14px}
+.method-card:hover{border-color:var(--v300)}
+.method-card .ic{color:var(--v600);flex:none}
+@media (max-width:1000px){ .info-btn span{display:none} .info-btn{padding:0;width:38px;justify-content:center} }
+
+.cut-link{color:var(--v700);font-weight:600;text-decoration:underline;text-underline-offset:2px}
