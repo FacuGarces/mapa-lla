@@ -269,3 +269,32 @@ details.ctx .dlist li .ic{color:var(--v600)}
 @media (max-width:1000px){ .info-btn span{display:none} .info-btn{padding:0;width:38px;justify-content:center} }
 
 .cut-link{color:var(--v700);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+
+.revl{font-size:12.5px;line-height:1.6;color:var(--ink2);margin:0}
+.row.int{align-items:flex-start}.row.int:not([data-mid]){cursor:default}.row.int:not([data-mid]):hover{background:none}.row.int .meta{margin-top:2px}.row.int .lft{flex:1;min-width:0}
+/* cargos filter */
+.cargos{display:flex;flex-direction:column;gap:6px}
+.cargos .cg{display:flex;flex-wrap:wrap;gap:6px}
+.chip.cc{height:30px;padding:0 10px}
+.chip.cc .n{font:600 11px "Fira Code",monospace;opacity:.75}
+.chip.cc.zero:not(.on){opacity:.55}
+.chip.cc-all{height:30px;border-style:dashed;color:var(--ink3)}
+h4.cam{margin:14px 0 8px;font-size:13px;color:var(--ink2);font-weight:600}
+h4.cam:first-child{margin-top:0}
+.method-card.q{border-color:var(--q-bd);background:var(--q-bg)}
+.method-card.q .ic{color:var(--q)}
+/* intendente markers */
+.mk-int{display:grid;place-items:center;width:26px;height:26px;border-radius:999px;background:#F59E0B;border:2px solid #fff;box-shadow:0 2px 6px rgba(120,53,15,.45);cursor:pointer}
+.mk-int svg{width:15px;height:15px;fill:#fff;stroke:none}
+.mk-int.sel{outline:3px solid var(--v300)}
+.legend .mk-int{display:inline-grid;vertical-align:middle;margin-right:6px;cursor:default}
+.legend .mk-int svg{width:12px;height:12px}
+.mk{position:relative}
+.mk-star{position:absolute;top:-7px;right:-7px;width:16px;height:16px;border-radius:999px;background:#F59E0B;border:1.5px solid #fff;display:grid;place-items:center}
+.mk-star svg{width:9px;height:9px;fill:#fff;stroke:none}
+.mk.com{border-radius:6px}
+.star-s svg{width:13px;height:13px;fill:#F59E0B;stroke:none;vertical-align:-1px}
+.star-l{flex:none;width:28px;height:28px;border-radius:999px;background:#FEF3C7;display:grid;place-items:center;margin-top:2px}
+.star-l svg{width:15px;height:15px;fill:#D97706;stroke:none}
+@media (max-width:640px){.cargos .cg{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -14px;padding:0 14px}.cargos .cg::-webkit-scrollbar{display:none}.cargos .chip{flex:none}}
+.int-av{width:40px;height:40px;flex:none;margin-top:2px}

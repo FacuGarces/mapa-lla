@@ -36,65 +36,87 @@ const hoverable = window.matchMedia('(hover: hover)').matches;
 Promise.all(['data/core.json','data/munis.json','data/prov.geojson','data/deptos.geojson'].map(u=>fetch(u,{cache:'no-cache'}).then(r=>r.json())))
 .then(([core,munis,prov,deptos])=>{ Object.assign(S,{core,munis,prov,deptos}); P=core.prov; init(); });
 
-// ---------- counts (respect filters)
+// ---------- cargos (one filter for every kind of office)
+const CT = [
+  {k:'int', t:'Intendentes', one:'intendente', many:'intendentes', lv:'m'},
+  {k:'conc', t:'Concejales', one:'concejal', many:'concejales', lv:'m'},
+  {k:'com', t:'Comunas', one:'en comunas', many:'en comunas', lv:'m'},
+  {k:'ce', t:'Consejeros escolares', one:'consejero escolar', many:'consejeros escolares', lv:'m'},
+  {k:'leg', t:'Legisladores', one:'legislador provincial', many:'legisladores provinciales', lv:'p'},
+  {k:'dip', t:'Diputados nac.', one:'diputado nacional', many:'diputados nacionales', lv:'n'},
+  {k:'sen', t:'Senadores nac.', one:'senador nacional', many:'senadores nacionales', lv:'n'},
+];
+const CK = CT.map(c=>c.k), CMAP = Object.fromEntries(CT.map(c=>[c.k,c])), MK = ['int','conc','com','ce'];
+S.cargo = new Set(CK);
+try { const sv=JSON.parse(localStorage.getItem('cargos')||'null'); if(Array.isArray(sv)) S.cargo=new Set(sv.filter(k=>CK.includes(k))); } catch(e){}
+const on = k => S.cargo.has(k);
+const saveCargo = () => { try{ localStorage.setItem('cargos',JSON.stringify([...S.cargo])); }catch(e){} };
+
+// ---------- counts (respect both filters: cargo + pertenencia)
 const vis = (x,k) => S.filt[k] && (!S.filt.q || x.q);
 const cnt = bl => (bl||[]).reduce((a,b)=>a+b.m.filter(x=>vis(x,b.k)).length,0);
-const muniCount = id => cnt(S.munis[id].bl);
-const concCount = (pk,sec) => P[pk].munis.reduce((a,id)=>a+((!sec||S.munis[id].sec===sec)?muniCount(id):0),0);
-const legCount = (pk,i) => { const l=P[pk].leg; if(!l) return 0; return i==null ? l.cam.reduce((a,c)=>a+cnt(c.bl),0) : cnt(l.cam[i].bl); };
+const Z = () => ({int:0,conc:0,com:0,ce:0,leg:0,dip:0,sen:0});
+const addC = (a,b) => { for(const k in b) a[k]+=b[k]; return a; };
+const intVis = m => !!(m.int && vis(m.int,m.int.k));
+function muniC(id){ const m=S.munis[id]; return {int:intVis(m)&&!m.int.ya?1:0, conc:m.tc?0:cnt(m.bl), com:m.tc?cnt(m.bl):0, ce:cnt(m.ce)}; }
 const nacList = (pk,ch) => P[pk][ch].filter(x=>vis(x,x.k));
 const nacCount = (pk,ch) => ch ? nacList(pk,ch).length : nacList(pk,'dip').length+nacList(pk,'sen').length;
-const provTotal = pk => concCount(pk)+legCount(pk)+nacCount(pk);
+function provC(pk,sec){ const p=P[pk], c=Z();
+  p.munis.forEach(id=>{ if(sec && S.munis[id].sec!==sec) return; addC(c,muniC(id)); });
+  if(!sec){ if(p.leg) c.leg=p.leg.cam.reduce((a,x)=>a+cnt(x.bl),0); c.dip=nacList(pk,'dip').length; c.sen=nacList(pk,'sen').length; }
+  return c; }
+const countryC = () => allProv().reduce((a,k)=>addC(a,provC(k)),Z());
+const tot = c => CK.reduce((a,k)=>a+(on(k)?(c[k]||0):0),0);
+const muniTot = id => tot(muniC(id));
+const provTotal = pk => tot(provC(pk));
+const intList = pk => (P[pk].int||[]).filter(x=>vis(x,x.k));
+function breakdown(c,keys,sep=' · '){ return (keys||CK).filter(k=>on(k)&&c[k]).map(k=>`${c[k]} ${c[k]===1?CMAP[k].one:CMAP[k].many}`).join(sep); }
+// which cargo chips make sense for a place (structurally present)
+function cargoKeys(){ const st=S.st; if(!st.pk) return CK; const p=P[st.pk];
+  if(st.mid){ const m=S.munis[st.mid]; return MK.filter(k=>k==='int'?!!m.int:k==='ce'?!!m.ce:k==='com'?!!m.tc:!m.tc&&!m.vi); }
+  const ks=[]; if(p.int&&p.int.length) ks.push('int'); if(p.munis.some(id=>!S.munis[id].tc&&!S.munis[id].vi)||p.rev) ks.push('conc'); if(p.munis.some(id=>S.munis[id].tc)||p.revc) ks.push('com');
+  if(p.munis.some(id=>S.munis[id].ce)) ks.push('ce'); if(!st.sec){ if(p.leg) ks.push('leg'); ks.push('dip','sen'); } return ks; }
 const allProv = () => Object.keys(P);
 const sum = (arr,f) => arr.reduce((a,x)=>a+f(x),0);
 const camShort = n => /senad/i.test(n)?'Senado':/representantes/i.test(n)?'Representantes':/unicameral|^legislatura/i.test(n)?'Unicameral':'Diputados';
 const camClean = n => n.replace(/\s*\(.*?\)\s*/g,'').trim();
 
-// ---------- routing (whole state lives in the hash)
+// ---------- routing (place lives in the hash; cargo filter is a viewer preference)
 function parse(){
   const p = location.hash.replace(/^#\/?/,'').split('/').map(s=>{ try{return decodeURIComponent(s);}catch(e){return s;} });
-  const st = {pk:'',view:'res',sec:'',mid:'',cam:0,ch:'dip',mtab:'conc'};
+  const st = {pk:'',view:'res',sec:'',mid:'',ch:'dip',focus:''};
   if(p[0]==='nac'){ st.view='nac'; st.ch=p[1]==='sen'?'sen':'dip'; }
   else if(p[0]==='metodo'){ st.view='metodo'; }
-  else if(p[0]==='dudas'){ st.view='dudas'; st.pk=P[p[1]]?p[1]:''; st.dt=['per','not'].includes(p[2])?p[2]:''; }
-  else if(p[0]==='m' && S.munis[p[1]+'/'+p[2]]){ st.pk=p[1]; st.view='conc'; st.mid=p[1]+'/'+p[2]; st.sec=S.munis[st.mid].sec||''; st.mtab=p[3]||'conc'; }
-  else if(p[0]==='p' && P[p[1]] && p[2]==='dudas'){ st.view='dudas'; st.pk=p[1]; st.dt=''; }
+  else if(p[0]==='dudas'){ st.view='dudas'; st.pk=P[p[1]]?p[1]:''; }
+  else if(p[0]==='m' && S.munis[p[1]+'/'+p[2]]){ st.pk=p[1]; st.view='prov'; st.mid=p[1]+'/'+p[2]; st.sec=S.munis[st.mid].sec||''; }
+  else if(p[0]==='p' && P[p[1]] && p[2]==='dudas'){ st.view='dudas'; st.pk=p[1]; }
   else if(p[0]==='p' && P[p[1]]){
-    const pr=P[p[1]]; st.pk=p[1];
-    st.view = ['conc','leg','nac'].includes(p[2]) ? p[2] : defaultView(p[1]);
-    if(st.view==='conc' && !pr.munis.length) st.view='leg';
-    if(st.view==='leg' && !pr.leg) st.view='nac';
-    if(st.view==='conc'){
-      if(p[3]==='sec') st.sec=SEC.includes(p[4])?p[4]:'';
-      if(p[3]==='m' && S.munis[p[1]+'/'+p[4]]){ st.mid=p[1]+'/'+p[4]; st.sec=S.munis[st.mid].sec||''; st.mtab=['conc','ce','du'].includes(p[5])?p[5]:'conc'; }
-    } else if(st.view==='leg'){ st.cam=Math.max(0,Math.min(+(p[3]||0)||0, pr.leg.cam.length-1)); }
-    else st.ch = p[3]==='sen'?'sen':'dip';
+    st.pk=p[1]; st.view='prov'; let r=p.slice(2);
+    if(['conc','leg','nac'].includes(r[0])){ if(r[0]!=='conc') st.focus=r[0]; r=r.slice(1); }   // old links keep working
+    if(r[0]==='sec') st.sec=SEC.includes(r[1])?r[1]:'';
+    if(r[0]==='m' && S.munis[p[1]+'/'+r[1]]){ st.mid=p[1]+'/'+r[1]; st.sec=S.munis[st.mid].sec||''; }
   }
   return st;
 }
-function defaultView(pk){ return P[pk].munis.length ? 'conc' : P[pk].leg ? 'leg' : 'nac'; }
 function hashOf(st){
   if(st.view==='metodo') return '#/metodo';
-  if(st.view==='dudas') return '#/dudas/'+(st.pk||'todas')+(st.dt?'/'+st.dt:'');
+  if(st.view==='dudas') return '#/dudas/'+(st.pk||'todas');
   if(!st.pk) return st.view==='nac' ? '#/nac/'+st.ch : '#/';
-  let h='#/p/'+st.pk+'/'+st.view;
-  if(st.view==='conc'){ if(st.mid) h+='/m/'+st.mid.split('/')[1]+(st.mtab!=='conc'?'/'+st.mtab:''); else if(st.sec) h+='/sec/'+encodeURIComponent(st.sec); }
-  else if(st.view==='leg') h+='/'+st.cam; else h+='/'+st.ch;
+  let h='#/p/'+st.pk;
+  if(st.mid) h+='/m/'+st.mid.split('/')[1]; else if(st.sec) h+='/sec/'+encodeURIComponent(st.sec);
   return h;
 }
 function go(h){ if(location.hash===h) render(); else location.hash=h; }
 function set(patch){ go(hashOf({...S.st,...patch})); }
 function pickProvince(pk){
   if(S.st.view==='dudas'){ set({pk}); return; }
-  if(!pk){ set({pk:'',view:S.st.view==='nac'?'nac':'res',sec:'',mid:''}); return; }
-  const cur=S.st.view, pr=P[pk];
-  let view = (cur==='leg'&&pr.leg)||(cur==='nac') ? cur : (cur==='conc'&&pr.munis.length) ? 'conc' : defaultView(pk);
-  set({pk,view,sec:'',mid:'',cam:0,mtab:'conc'});
+  if(!pk){ go('#/'); return; }
+  set({pk,view:'prov',sec:'',mid:''});
 }
 
 // ---------- init
 function init(){
-  $('#cutoff').textContent = 'Corte ' + S.core.gen + ' · ' + Object.keys(S.munis).length + ' concejos relevados';
+  $('#cutoff').textContent = 'Corte ' + S.core.gen + ' · ' + Object.values(S.munis).filter(m=>!m.vi).length + ' concejos y comunas relevados';
   map = L.map('map',{zoomControl:false, minZoom:3, maxZoom:13, zoomSnap:.25, zoomDelta:.5, wheelPxPerZoomLevel:90, attributionControl:true, worldCopyJump:false, inertia:true});
   map.fitBounds(ARG);
   map.attributionControl.setPrefix(false); map.attributionControl.addAttribution('Cartografía: IGN · Leaflet');
@@ -136,67 +158,81 @@ function drawMap(){
   if(!st.pk){ drawCountry(); return; }
   const p=P[st.pk]; const pf=S.prov.features.find(f=>f.properties.in1===p.code);
   const pb=L.geoJSON(pf).getBounds();
-  if(st.view==='conc') drawMunis(st.pk, st.mid, pb);
+  if(MK.some(on) && p.munis.length) drawMunis(st.pk, st.mid, pb);
   else {
-    const n = st.view==='leg' ? legCount(st.pk,st.cam) : nacCount(st.pk,st.ch);
-    provLayer=L.geoJSON(pf,{style:{fillColor:n?'#BBA6EE':'#F3F0FA',fillOpacity:.75,color:'#4C1D95',weight:2},onEachFeature:(f,l)=>l.on({click:()=>{ if(p.munis.length) set({view:'conc',mid:'',sec:''}); }, mouseover:e=>tip(e,`<b>${esc(p.name)}</b>${p.munis.length?'Tocá para ver los concejos':''}`), mousemove:e=>tip(e,`<b>${esc(p.name)}</b>${p.munis.length?'Tocá para ver los concejos':''}`), mouseout:()=>tip(null)})}).addTo(map);
-    const lbl = st.view==='leg' ? `Legislatura · ${camClean(p.leg.cam[st.cam].n)}` : (st.ch==='dip'?'Diputados nacionales':'Senadores nacionales')+' por '+p.name;
-    legendSimple(lbl, n);
+    const n=provTotal(st.pk);
+    provLayer=L.geoJSON(pf,{style:{fillColor:n?'#BBA6EE':'#F3F0FA',fillOpacity:.75,color:'#4C1D95',weight:2},interactive:false}).addTo(map);
+    legendSimple(p.name, n);
     fit(pb, 10);
   }
 }
+const cargoNote = () => { const sel=CT.filter(c=>on(c.k)); return sel.length===CT.length ? 'Todos los cargos.' : sel.length ? 'Cargos: '+sel.map(c=>c.t.toLowerCase()).join(', ')+'.' : 'Ningún cargo elegido.'; };
 function drawCountry(){
   const st=S.st; const vals={}; let max=0;
   allProv().forEach(k=>{ vals[k] = st.view==='nac' ? nacCount(k,st.ch) : provTotal(k); max=Math.max(max,vals[k]); });
-  const unit = st.view==='nac' ? (st.ch==='dip'?'diputados nacionales':'senadores nacionales') : 'representantes';
   provLayer = L.geoJSON(S.prov,{
     style:f=>({fillColor:colorFor(vals[pkByCode(f.properties.in1)],max),fillOpacity:.9,color:'#fff',weight:1.2}),
-    onEachFeature:(f,l)=>{ const k=pkByCode(f.properties.in1); const h=()=>`<b>${esc(P[k].name)}</b>${vals[k]} ${unit}`;
-      l.on({mouseover:e=>{l.setStyle({weight:3,color:'#4C1D95'}); tip(e,h());}, mousemove:e=>tip(e,h()), mouseout:()=>{provLayer.resetStyle(l); tip(null);},
-            click:()=>pickProvince(k)}); }
+    onEachFeature:(f,l)=>{ const k=pkByCode(f.properties.in1);
+      const h=()=>`<b>${esc(P[k].name)}</b>${st.view==='nac'?`${vals[k]} ${st.ch==='dip'?'diputados':'senadores'} nacionales`:(breakdown(provC(k),null,'<br>')||'Nadie con estos filtros')}`;
+      l.on({mouseover:e=>{l.setStyle({weight:3,color:'#4C1D95'}); tip(e,h());}, mousemove:e=>tip(e,h()), mouseout:()=>{provLayer.resetStyle(l); tip(null);}, click:()=>pickProvince(k)}); }
   }).addTo(map);
-  legend(st.view==='nac'?`${st.ch==='dip'?'Diputados':'Senadores'} nacionales por provincia`:'Representantes por provincia', max, st.view==='nac'?'LLA y aliados, según filtros.':'Suma Congreso, legislatura y concejos relevados.');
+  legend(st.view==='nac'?`${st.ch==='dip'?'Diputados':'Senadores'} nacionales por provincia`:'Personas por provincia', max, st.view==='nac'?'LLA y aliados, según filtros.':cargoNote());
   fit(ARG, 6);
 }
+const STAR='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4L2.8 9.5l6.4-.8Z"/></svg>';
+function muniTip(id){ const m=S.munis[id]; const iv=on('int')&&intVis(m); const b=breakdown(muniC(id),['conc','com','ce'],'<br>');
+  const lines=[]; if(iv) lines.push(`${esc(m.int.c)}: ${esc(m.int.n)}`); if(b) lines.push(b);
+  if(!lines.length) lines.push(m.vi?'Sin datos del concejo':'Sin LLA ni aliados con estos filtros');
+  if(m.st.q && on(m.tc?'com':'conc')) lines.push(`${m.st.q} a confirmar`);
+  return `<b>${esc(m.n)}</b>${lines.join('<br>')}`; }
+function intIcon(sel){ return L.divIcon({className:'',html:`<div class="mk-int ${sel?'sel':''}" title="Intendente LLA">${STAR}</div>`,iconSize:[26,26],iconAnchor:[13,13]}); }
 function drawMunis(pk, sel, pb){
   const p=P[pk];
   provLayer=L.geoJSON(S.prov.features.find(f=>f.properties.in1===p.code),{style:{fill:false,color:'#4C1D95',weight:2},interactive:false}).addTo(map);
+  markerLayer=L.layerGroup().addTo(map);
+  const showInt=on('int');
   if(pk==='buenos-aires'){
     const byG={}; p.munis.forEach(id=>{ const m=S.munis[id]; if(m.g) byG[m.g]=id; });
-    let max=0; Object.values(byG).forEach(id=>max=Math.max(max,muniCount(id)));
+    let max=0; Object.values(byG).forEach(id=>max=Math.max(max,muniTot(id)));
     const feats=S.deptos.features.filter(f=>String(f.properties.in1).startsWith('06'));
     const sec=S.st.sec;
     deptoLayer=L.geoJSON({type:'FeatureCollection',features:feats},{
-      style:f=>{ const id=byG[f.properties.in1]; const m=S.munis[id]; const v=id?muniCount(id):0; const inSec=!sec||(m&&m.sec===sec);
-        const nodata=m && !m.bl.length && m.es!=='oficial_parcial';
-        return {fillColor:nodata?'#E9E6F0':colorFor(v,max), fillOpacity:inSec?.85:.18, color:id===sel?'#2E1065':'#fff', weight:id===sel?3:.8, opacity:inSec?1:.4, dashArray:nodata?'3':null}; },
+      style:f=>{ const id=byG[f.properties.in1]; const m=S.munis[id]; const v=id?muniTot(id):0; const inSec=!sec||(m&&m.sec===sec);
+        const nodata=m && !m.bl.length && !m.ce && m.es!=='oficial_parcial';
+        return {fillColor:nodata&&!v?'#E9E6F0':colorFor(v,max), fillOpacity:inSec?.85:.18, color:id===sel?'#2E1065':'#fff', weight:id===sel?3:.8, opacity:inSec?1:.4, dashArray:nodata&&!v?'3':null}; },
       onEachFeature:(f,l)=>{ const id=byG[f.properties.in1]; const m=S.munis[id]; if(!m) return;
-        const h=()=>`<b>${esc(m.n)}</b>${esc(m.sec)} sección · ${muniCount(id)} en el concejo${m.st.q?` · ${m.st.q} a confirmar`:''}`;
-        l.on({mouseover:e=>{ l.setStyle({weight:2.5,color:'#4C1D95'}); tip(e,h()); }, mousemove:e=>tip(e,h()), mouseout:()=>{ deptoLayer.resetStyle(l); tip(null); }, click:()=>set({mid:id,sec:m.sec,mtab:'conc'})}); }
+        l.on({mouseover:e=>{ l.setStyle({weight:2.5,color:'#4C1D95'}); tip(e,muniTip(id)); }, mousemove:e=>tip(e,muniTip(id)), mouseout:()=>{ deptoLayer.resetStyle(l); tip(null); }, click:()=>set({mid:id,sec:m.sec})});
+        if(showInt && intVis(m) && (!sec||m.sec===sec)){ const mk=L.marker(l.getBounds().getCenter(),{icon:intIcon(id===sel),keyboard:true,title:m.n+' · intendente LLA',zIndexOffset:2000}).addTo(markerLayer);
+          mk.on({mouseover:e=>tip(e,muniTip(id)), mouseout:()=>tip(null), click:()=>set({mid:id,sec:m.sec})}); } }
     }).addTo(map);
-    legend('Concejales LLA y aliados', max, 'Gris punteado = sin datos de la fuente.', true);
+    legend('LLA y aliados por municipio', max, cargoNote()+' Gris punteado = sin datos.', true, false, showInt&&p.int);
     if(sel && S.munis[sel].g){ const lay=deptoLayer.getLayers().find(l=>l.feature.properties.in1===S.munis[sel].g); if(lay){ fit(lay.getBounds(),10); return; } }
     if(sec){ const ls=deptoLayer.getLayers().filter(l=>{ const id=byG[l.feature.properties.in1]; return id&&S.munis[id].sec===sec; }); if(ls.length){ fit(L.featureGroup(ls).getBounds(),10); return; } }
     fit(pb,9);
   } else {
     const feats=S.deptos.features.filter(f=>String(f.properties.in1).startsWith(p.code));
     deptoLayer=L.geoJSON({type:'FeatureCollection',features:feats},{style:{fillColor:'#F3F0FA',fillOpacity:.8,color:'#fff',weight:.8},interactive:false}).addTo(map);
-    markerLayer=L.layerGroup().addTo(map);
-    p.munis.forEach(id=>{ const m=S.munis[id]; if(!m.ll) return; const v=muniCount(id); const sz=v?Math.min(40,24+v*1.4):18;
-      const icon=L.divIcon({className:'',html:`<div class="mk ${v?'':'zero'} ${id===sel?'sel':''}" style="width:${sz}px;height:${sz}px">${v||''}</div>`,iconSize:[sz,sz],iconAnchor:[sz/2,sz/2]});
-      const mk=L.marker(m.ll,{icon,keyboard:true,title:m.n,zIndexOffset:id===sel?1000:v}).addTo(markerLayer);
-      mk.on({mouseover:e=>tip(e,`<b>${esc(m.n)}</b>${v} en el concejo${m.st.q?` · ${m.st.q} a confirmar`:''}`), mouseout:()=>tip(null), click:()=>set({mid:id,mtab:'conc'})}); });
-    legend('Concejos relevados',0,'Círculo = ciudad relevada; el número son las personas visibles con los filtros.',false,true);
+    p.munis.forEach(id=>{ const m=S.munis[id]; if(!m.ll) return; const c=muniC(id); const iv=showInt&&intVis(m);
+      const v=tot({...c,int:0}); const relevant=MK.some(k=>on(k)&&(k==='int'?!!m.int:k==='com'?m.tc:k==='ce'?!!m.ce:!m.tc&&!m.vi));
+      if(!relevant && !iv) return;
+      if(iv && !v){ const mk=L.marker(m.ll,{icon:intIcon(id===sel),keyboard:true,title:m.n+' · intendente LLA',zIndexOffset:2000}).addTo(markerLayer);
+        mk.on({mouseover:e=>tip(e,muniTip(id)), mouseout:()=>tip(null), click:()=>set({mid:id})}); return; }
+      const sz=v?Math.min(40,24+v*1.4):18;
+      const icon=L.divIcon({className:'',html:`<div class="mk ${v?'':'zero'} ${id===sel?'sel':''} ${m.tc?'com':''}" style="width:${sz}px;height:${sz}px">${v||''}${iv?`<span class="mk-star">${STAR}</span>`:''}</div>`,iconSize:[sz,sz],iconAnchor:[sz/2,sz/2]});
+      const mk=L.marker(m.ll,{icon,keyboard:true,title:m.n,zIndexOffset:id===sel?3000:(iv?1500:v)}).addTo(markerLayer);
+      mk.on({mouseover:e=>tip(e,muniTip(id)), mouseout:()=>tip(null), click:()=>set({mid:id})}); });
+    legend('LLA y aliados por localidad',0,cargoNote()+' El número son las personas visibles con los filtros.',false,true,showInt&&p.int);
     if(sel && S.munis[sel].ll){ fit(L.latLng(S.munis[sel].ll).toBounds(18000),11); return; }
     fit(pb,8);
   }
 }
-function legend(title,max,note,nodata,markers){
+function legend(title,max,note,nodata,markers,ints){
   let h=`<h4>${esc(title)}</h4>`;
   if(markers) h+=`<div class="sw"><span class="mk" style="width:22px;height:22px;display:inline-grid">5</span>Con representantes</div><div class="sw"><span class="mk zero" style="width:18px;height:18px;display:inline-grid"></span>Relevada, sin LLA ni aliados</div>`;
   else { h+=`<div class="sw"><i style="background:${ramp[0]}"></i><span class="num">0</span></div>`;
     binsLabel(max||1).forEach(([a,b],i)=>{ if(a<=b) h+=`<div class="sw"><i style="background:${ramp[i+1]}"></i><span class="num">${a===b?a:a+'–'+b}</span></div>`; });
     if(nodata) h+=`<div class="sw"><i class="hatch"></i>Sin datos</div>`; }
+  if(ints) h+=`<div class="sw"><span class="mk-int" style="width:22px;height:22px">${STAR}</span>Intendente LLA</div>`;
   h+=`<div class="sub">${esc(note)}</div>`; setLegend(h);
 }
 function legendSimple(title,n){ setLegend(`<h4>${esc(title)}</h4><div class="sw"><i style="background:#BBA6EE"></i><span><b class="num">${n}</b> LLA y aliados</span></div><div class="sub">El detalle está en el panel.</div>`); }
@@ -225,122 +261,140 @@ function chooseDD(d,v){ const id=d.dataset.dd; closeDD(); DD[id].pick(v); }
 function seg(key,items,val,label){ return `<div>${label?`<span class="lbl">${esc(label)}</span>`:''}<div class="seg" role="tablist" aria-label="${esc(label||key)}">${items.map(([v,t,n])=>`<button type="button" role="tab" data-seg="${key}" data-v="${esc(v)}" aria-selected="${v===val}"><span class="t">${esc(t)}</span>${n!=null?`<span class="n">${n}${items.length>3?'':' '+((key==='dt'||v==='dudas')?(n===1?'pendiente':'pendientes'):(n===1?'persona':'personas'))}</span>`:''}</button>`).join('')}</div></div>`; }
 
 // ---------- nav (always-visible controls)
+function scopeC(){ const st=S.st; if(st.mid) return {...Z(),...muniC(st.mid)}; if(st.pk) return provC(st.pk,st.sec); return countryC(); }
+function cargoChips(){
+  const c=scopeC(), ks=cargoKeys(); const all=ks.every(on);
+  const chips=CT.filter(x=>ks.includes(x.k)).map(x=>`<button type="button" class="chip cc ${on(x.k)?'on':''} ${c[x.k]?'':'zero'}" data-c="${x.k}" aria-pressed="${on(x.k)}">${esc(x.t)}<span class="n">${c[x.k]||0}</span></button>`).join('');
+  return `<div class="cargos"><span class="lbl">Cargos</span><div class="cg" role="group" aria-label="Cargos">${chips}<button type="button" class="chip cc-all" data-call="${all?'none':'all'}">${all?'Ninguno':'Todos'}</button></div></div>`;
+}
 function renderNav(){
   const st=S.st; let h='';
-  const popts=[{v:'',t:'Toda Argentina',n:st.view==='nac'&&!st.pk?sum(allProv(),k=>nacCount(k,st.ch)):sum(allProv(),provTotal)}]
-    .concat(allProv().sort((a,b)=>P[a].name.localeCompare(P[b].name)).map(k=>({v:k,t:P[k].name,n:provTotal(k)})));
-  if(st.pk) h+=`<button type="button" class="to-arg" data-arg="1">${I.back}Volver a toda Argentina</button>`;
-  h+=dd('prov','Provincia',popts,st.pk,{search:true,sph:'Buscar provincia…',pick:pickProvince});
+  const popts=[{v:'',t:'Toda Argentina',n:st.view==='nac'?sum(allProv(),k=>nacCount(k,st.ch)):tot(countryC())}]
+    .concat(allProv().sort((a,b)=>P[a].name.localeCompare(P[b].name)).map(k=>({v:k,t:P[k].name,n:st.view==='nac'?nacCount(k,st.ch):provTotal(k)})));
+  if(st.pk || st.view==='nac' || st.view==='dudas') h+=`<button type="button" class="to-arg" data-arg="1">${I.back}Volver a toda Argentina</button>`;
+  if(st.view==='metodo'){ $('#nav').innerHTML=h; return; }
   if(st.view==='dudas'){
-    const D=dudas(st.pk);
-    h+=seg('view',[['res',st.pk?P[st.pk].name:'Resumen',null],['dudas','Dudas',D.length]],'dudas','Qué ver');
-  } else if(!st.pk){
-    if(st.view!=='metodo') h+=seg('view',[['res','Resumen',null],['nac','Congreso',sum(allProv(),k=>nacCount(k))],['dudas','Dudas',dudas().length]],st.view,'Qué ver');
-    if(st.view==='nac') h+=seg('ch',[['dip','Diputados',sum(allProv(),k=>nacCount(k,'dip'))],['sen','Senadores',sum(allProv(),k=>nacCount(k,'sen'))]],st.ch,'Cámara');
-  } else {
-    const p=P[st.pk]; const items=[];
-    if(p.munis.length) items.push(['conc',st.pk==='buenos-aires'?'Municipios':'Concejos',concCount(st.pk)]);
-    if(p.leg) items.push(['leg','Legislatura',legCount(st.pk)]);
-    items.push(['nac','Congreso',nacCount(st.pk)]);
-    items.push(['dudas','Dudas',dudas(st.pk).length]);
-    h+=seg('view',items,st.view,'Qué ver en '+p.name);
-    if(st.view==='conc'){
-      let ms=p.munis.map(id=>S.munis[id]); if(st.sec) ms=ms.filter(m=>m.sec===st.sec);
-      const mopts=ms.sort((a,b)=>a.n.localeCompare(b.n)).map(m=>({v:m.id,t:m.n,m:st.pk==='buenos-aires'&&!st.sec?m.sec:'',n:muniCount(m.id)}));
-      const muniDD=dd('muni',st.pk==='buenos-aires'?'Municipio':'Ciudad',[{v:'',t:st.pk==='buenos-aires'?'Todos':'Todas'}].concat(mopts),st.mid,{search:true,sph:'Buscar…',ph:'Todos',pick:v=>set({mid:v,sec:v?(S.munis[v].sec||''):st.sec,mtab:'conc'})});
-      if(st.pk==='buenos-aires'){
-        const sopts=[{v:'',t:'Todas',n:concCount(st.pk)}].concat(SEC.map(s=>({v:s,t:s+' sección',n:concCount(st.pk,s)})));
-        h+=`<div class="nav-row">${dd('sec','Sección electoral',sopts,st.sec,{pick:v=>set({sec:v,mid:''})})}${muniDD}</div>`;
-      } else h+=muniDD;
-    } else if(st.view==='leg' && p.leg.cam.length>1){
-      h+=seg('cam',p.leg.cam.map((c,i)=>[String(i),camShort(c.n),cnt(c.bl)]),String(st.cam),'Cámara');
-    } else if(st.view==='nac'){
-      h+=seg('ch',[['dip','Diputados',nacCount(st.pk,'dip')],['sen','Senadores',nacCount(st.pk,'sen')]],st.ch,'Cámara');
-    }
-  }
+    h+=dd('prov','Provincia',popts,st.pk,{search:true,sph:'Buscar provincia…',pick:pickProvince});
+    $('#nav').innerHTML=h; return; }
+  if(st.view==='nac'){
+    h+=seg('ch',[['dip','Diputados',sum(allProv(),k=>nacCount(k,'dip'))],['sen','Senadores',sum(allProv(),k=>nacCount(k,'sen'))]],st.ch,'Congreso de la Nación');
+    $('#nav').innerHTML=h; return; }
+  const provDD=dd('prov','Provincia',popts,st.pk,{search:true,sph:'Buscar provincia…',pick:pickProvince});
+  if(st.pk && P[st.pk].munis.length){
+    const p=P[st.pk]; let ms=p.munis.map(id=>S.munis[id]); if(st.sec) ms=ms.filter(m=>m.sec===st.sec);
+    const mopts=ms.sort((a,b)=>a.n.localeCompare(b.n,'es',{numeric:true})).map(m=>({v:m.id,t:m.n,m:st.pk==='buenos-aires'&&!st.sec?m.sec:(m.tc?'comuna':''),n:muniTot(m.id)}));
+    const muniDD=dd('muni','Lugar',[{v:'',t:'Toda la provincia'}].concat(mopts),st.mid,{search:true,sph:'Buscar municipio o comuna…',ph:'Toda la provincia',pick:v=>set({mid:v,sec:v?(S.munis[v].sec||''):st.sec})});
+    h+=`<div class="nav-row">${provDD}${muniDD}</div>`;
+    if(st.pk==='buenos-aires' && !st.mid){ const sopts=[{v:'',t:'Todas',n:provTotal(st.pk)}].concat(SEC.map(s=>({v:s,t:s+' sección',n:tot(provC(st.pk,s))})));
+      h+=dd('sec','Sección electoral',sopts,st.sec,{pick:v=>set({sec:v,mid:''})}); }
+  } else h+=provDD;
+  h+=cargoChips();
   $('#nav').innerHTML=h;
 }
 
 // ---------- body
 function render(){
   S.st=parse();
+  if(S.st.focus==='leg') S.cargo.add('leg'); if(S.st.focus==='nac'){ S.cargo.add('dip'); S.cargo.add('sen'); }
   renderNav();
   const st=S.st;
   if(st.view==='metodo') renderMethod();
   else if(st.view==='dudas') renderDudas();
   else if(!st.pk) st.view==='nac' ? renderNacAll() : renderCountry();
-  else if(st.view==='conc') st.mid ? renderMuni(st.mid) : renderConcList(st.pk);
-  else if(st.view==='leg') renderLeg(st.pk);
-  else renderProvNac(st.pk);
+  else st.mid ? renderMuni(st.mid) : renderProv(st.pk);
   $('#body').scrollTop=0;
   if(isMobile()){ const pn=$('#panel'); layoutSheet();
-    const deep = st.mid || st.view==='leg' || st.view==='nac' || st.view==='metodo' || st.view==='dudas';
+    const deep = st.mid || st.view==='nac' || st.view==='metodo' || st.view==='dudas' || st.focus;
     if(deep && S.snap==='peek') snap('mid',true);
     pn.scrollTop = deep && S.lastHash!==undefined ? Math.max(0,$('#body').offsetTop-26) : 0; }
+  if(st.focus){ const el=document.getElementById('sec-'+st.focus); if(el) setTimeout(()=>el.scrollIntoView({block:'start'}),30); }
   S.lastHash=location.hash;
   drawMap();
 }
-const kpi=(v,l,c='',goTo='')=>goTo?`<button type="button" class="kpi ${c}" data-go="${goTo}"><b>${v}</b><span>${esc(l)}</span></button>`:`<div class="kpi ${c}"><b>${v}</b><span>${esc(l)}</span></div>`;
+const kpi=(v,l,c='',attr='')=>attr?`<button type="button" class="kpi ${c}" ${attr}><b>${v}</b><span>${esc(l)}</span></button>`:`<div class="kpi ${c}"><b>${v}</b><span>${esc(l)}</span></div>`;
+const noneHTML = () => `<div class="empty">No hay ningún cargo elegido. Activá alguno en <b>Cargos</b>, arriba.</div>`;
+function dudasCard(pk){ const n=dudas(pk).length; return n?`<section class="zone"><a class="method-card q" href="#/dudas/${pk||'todas'}">${I.q}<span><b>${n} ${n===1?'persona':'personas'} a confirmar</b><br>Electos por LLA de los que no sabemos si siguen en el espacio.</span>${I.chev}</a></section>`:''; }
 function renderCountry(){
-  let nac=0,leg=0,conc=0,ce=0,q=0,dis=0;
-  allProv().forEach(k=>{ const p=P[k]; [...p.dip,...p.sen].forEach(x=>{ if(x.k==='LLA') nac++; });
-    if(p.leg) p.leg.cam.forEach(c=>c.bl.forEach(b=>{ if(b.k==='LLA') leg+=b.m.length; }));
-    p.munis.forEach(id=>{ const m=S.munis[id]; m.bl.forEach(b=>{ if(b.k==='LLA') conc+=b.m.length; if(b.k==='disidente') dis+=b.m.length; b.m.forEach(x=>q+=x.q||0); }); (m.ce||[]).forEach(b=>{ if(b.k==='LLA') ce+=b.m.length; }); }); });
+  const c=countryC(); let q=0,dis=0;
+  allProv().forEach(k=>{ const p=P[k]; [...p.dip,...p.sen].forEach(x=>{ if(x.k==='disidente') dis++; q+=x.q||0; });
+    if(p.leg) p.leg.cam.forEach(cm=>cm.bl.forEach(b=>{ if(b.k==='disidente') dis+=b.m.length; b.m.forEach(x=>q+=x.q||0); }));
+    p.munis.forEach(id=>{ const m=S.munis[id]; [...m.bl,...(m.ce||[])].forEach(b=>{ if(b.k==='disidente') dis+=b.m.length; b.m.forEach(x=>q+=x.q||0); }); }); });
   const rows=allProv().map(k=>[k,P[k],provTotal(k)]).sort((a,b)=>b[2]-a[2]); const max=rows[0][2]||1;
+  const ks=CT.filter(x=>on(x.k));
   $('#body').innerHTML=`
-  <section class="zone"><h2>Argentina</h2><p class="sub">Elegí una provincia en el mapa o en el menú de arriba. Adentro de cada provincia podés ver sus concejos, su legislatura y sus representantes en el Congreso.</p></section>
-  <section class="zone"><h3>Representantes LLA en todo el país</h3><div class="kpis">
-    ${kpi(nac,'En el Congreso Nacional','', '#/nac/dip')}${kpi(leg,'En legislaturas provinciales')}${kpi(conc,'En concejos deliberantes')}
-    ${kpi(ce,'Consejeros escolares (PBA)')}${kpi(dis,'Disidentes (ex LLA)')}${kpi(q,'Casos a confirmar','q','#/dudas/todas')}</div></section>
+  <section class="zone"><h2>Argentina</h2><p class="sub">Elegí una provincia en el mapa o en el menú. Con <b>Cargos</b> elegís qué tipo de representantes ver; abajo, con <b>Mostrar</b>, si son de LLA, aliados o disidentes.</p></section>
+  <section class="zone"><h3>${tot(c)} personas con estos filtros</h3>${ks.length?`<div class="kpis">${ks.map(x=>kpi(c[x.k],x.t,'',x.k==='dip'||x.k==='sen'?`data-go="#/nac/${x.k}"`:`data-solo="${x.k}" title="Ver solo ${esc(x.t.toLowerCase())}"`)).join('')}${kpi(dis,'Disidentes (ex LLA)')}</div><p class="sub" style="margin-top:8px">Tocá un número para ver solo ese cargo.</p>`:noneHTML()}</section>
+  ${dudasCard('')}
   <section class="zone"><a class="method-card" href="#/metodo">${I.info}<span><b>¿Cómo se armó este mapa?</b><br>Qué cuenta como LLA, aliado o disidente, de dónde salen los datos y qué significa cada duda.</span>${I.chev}</a></section>
-  <section class="zone"><h3>Provincias · LLA y aliados</h3><ul class="rows">${rows.map(([k,p,v])=>`<li class="row" tabindex="0" data-pk="${k}"><div class="lft"><div class="nm">${esc(p.name)}</div><div class="meta">${p.munis.length?p.munis.length+' concejos relevados':'Legislatura y Congreso'}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`).join('')}</ul></section>`;
+  ${ks.length?`<section class="zone"><h3>Provincias</h3><ul class="rows">${rows.map(([k,p,v])=>`<li class="row" tabindex="0" data-pk="${k}"><div class="lft"><div class="nm">${esc(p.name)}</div><div class="meta">${esc(breakdown(provC(k))||'Sin LLA ni aliados con estos filtros')}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`).join('')}</ul></section>`:''}`;
 }
-function provHead(pk){
-  const p=P[pk]; const c=concCount(pk), l=legCount(pk), n=nacCount(pk);
-  return `<section class="zone"><h2>${esc(p.name)}</h2><p class="sub">${p.munis.length?`${c} en concejos · `:''}${p.leg?`${l} en la legislatura · `:''}${n} en el Congreso</p></section>`;
+function provHead(pk,sec){
+  const p=P[pk], c=provC(pk,sec), b=breakdown(c);
+  return `<section class="zone"><h2>${esc(p.name)}${sec?` · ${esc(sec)} sección`:''}</h2><p class="sub">${b?esc(b):'Nadie con estos filtros.'}</p></section>`;
 }
-function renderConcList(pk){
-  const p=P[pk], st=S.st; let ms=p.munis.map(id=>S.munis[id]); if(st.sec) ms=ms.filter(m=>m.sec===st.sec);
-  ms.sort((a,b)=>muniCount(b.id)-muniCount(a.id)||a.n.localeCompare(b.n)); const max=Math.max(1,...ms.map(m=>muniCount(m.id)));
-  const qN=ms.reduce((a,m)=>a+(m.st.q||0),0);
-  const note = pk==='buenos-aires' ? `Los 135 municipios. ${st.sec?`Mostrando la ${st.sec.toLowerCase()} sección electoral.`:'Filtrá por sección electoral o elegí un municipio.'}` :
-    `Se relevaron ${p.munis.length} ciudades: las cabeceras y las que tienen concejales de LLA o aliados según tribunales electorales y prensa.`;
-  $('#body').innerHTML = provHead(pk) + `<section class="zone"><h3>${pk==='buenos-aires'?(st.sec?st.sec+' sección':'Municipios'):'Concejos deliberantes'} · ${ms.length}</h3>
-   <div class="hint" style="margin:0 0 10px">${I.info}<span>${esc(note)}${qN?` Hay <b>${qN}</b> casos a confirmar.`:''}</span></div>
-   ${ms.length?`<ul class="rows">${ms.map(m=>{ const v=muniCount(m.id); const es=ESTADO[m.es]||['','b-src'];
-     return `<li class="row" tabindex="0" data-mid="${m.id}"><div class="lft"><div class="nm">${esc(m.n)}</div><div class="meta">${m.sec?esc(m.sec)+' · ':''}${esc(es[0])}${m.st.q?` · <b style="color:var(--q)">${m.st.q} a confirmar</b>`:''}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`; }).join('')}</ul>`:'<div class="empty">Sin concejos relevados.</div>'}</section>`;
+function zoneH(id,title,n,inner,hint){ return `<section class="zone" id="sec-${id}"><h3>${title}${n!=null?` · ${n}`:''}</h3>${hint?`<div class="hint" style="margin:0 0 10px">${I.info}<span>${hint}</span></div>`:''}${inner}</section>`; }
+function renderProv(pk){
+  const p=P[pk], st=S.st; const ks=cargoKeys().filter(on);
+  let h=provHead(pk,st.sec);
+  if(!S.cargo.size){ $('#body').innerHTML=h+noneHTML(); return; }
+  // intendentes
+  if(ks.includes('int')){ const l=intList(pk).filter(x=>!st.sec||S.munis[x.mid].sec===st.sec); if(l.length) h+=intHTML(l); }
+  // municipios: concejales + consejeros escolares (+ intendente as context)
+  const mk=['conc','ce'].filter(k=>ks.includes(k));
+  if(mk.length){
+    let ms=p.munis.map(id=>S.munis[id]).filter(m=>!m.tc && (!st.sec||m.sec===st.sec) && (!m.vi || (ks.includes('int')&&intVis(m))));
+    const val=m=>tot({...Z(),...muniC(m.id),int:0});
+    ms.sort((a,b)=>val(b)-val(a)||a.n.localeCompare(b.n)); const max=Math.max(1,...ms.map(val));
+    const qN=ms.reduce((a,m)=>a+(m.st.q||0),0);
+    const title=pk==='buenos-aires'?'Municipios':mk.length===1&&mk[0]==='conc'?'Concejos deliberantes':'Municipios';
+    const note=pk==='buenos-aires'?`Los 135 municipios: concejo deliberante${ks.includes('ce')?' y consejo escolar':''}.${st.sec?'':' Podés filtrar por sección electoral.'}`:`${ms.filter(m=>!m.vi).length} concejos con datos${p.rev&&ks.includes('conc')?` y ${p.rev.m.length} municipios revisados sin bloque LLA (al final)`:''}.`;
+    h+=zoneH('conc',title,ms.length,ms.length?`<ul class="rows">${ms.map(m=>{ const v=val(m); const es=ESTADO[m.es]||['','b-src']; const bd=breakdown({...Z(),...muniC(m.id),int:0},mk);
+      return `<li class="row" tabindex="0" data-mid="${m.id}"><div class="lft"><div class="nm">${esc(m.n)}${ks.includes('int')&&intVis(m)?` <span class="star-s" title="Intendente LLA">${STAR}</span>`:''}</div><div class="meta">${m.sec&&!st.sec?esc(m.sec)+' · ':''}${bd?esc(bd)+' · ':''}${m.vi?'Sin datos del concejo':esc(es[0])}${m.st.q&&ks.includes('conc')?` · <b style="color:var(--q)">${m.st.q} a confirmar</b>`:''}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`; }).join('')}</ul>`:'<div class="empty">Sin municipios relevados.</div>',esc(note)+(qN&&ks.includes('conc')?` Hay <b>${qN}</b> casos a confirmar.`:''));
+    if(ks.includes('conc')) h+=revHTML(p);
+  }
+  if(ks.includes('com') && !st.sec) h+=comHTML(p,p.munis.map(id=>S.munis[id]).filter(m=>m.tc));
+  if(ks.includes('leg') && p.leg){
+    const inner=p.leg.cam.map(c=>`${p.leg.cam.length>1?`<h4 class="cam">${esc(camClean(c.n))} · ${cnt(c.bl)}</h4>`:''}${cnt(c.bl)?blocsHTML(c.bl):'<div class="empty">Sin legisladores LLA ni aliados con los filtros actuales.</div>'}${othersHTML(c.ot)}`).join('');
+    const ln=p.leg.cam.reduce((a,c)=>a+cnt(c.bl),0);
+    h+=zoneH('leg',p.leg.cam.length>1?'Legislatura':/^legislatura/i.test(camClean(p.leg.cam[0].n))?'Legislatura (unicameral)':'Legislatura · '+esc(camClean(p.leg.cam[0].n)),ln,inner+(p.leg.dudas&&p.leg.dudas.length?dudasHTML(p.leg.dudas):'')+(p.leg.cx&&p.leg.cx.length?ctxHTML(p.leg.cx):''));
+  }
+  const nk=['dip','sen'].filter(k=>ks.includes(k));
+  if(nk.length){
+    const inner=nk.map(ch=>{ const l=nacList(pk,ch); return `<h4 class="cam">${ch==='dip'?'Diputados nacionales':'Senadores nacionales'} · ${l.length}</h4>${l.length?blocsHTML(groupNac(l),false):'<div class="empty">Ninguno LLA o aliado con los filtros actuales.</div>'}`; }).join('');
+    h+=zoneH('nac','Congreso de la Nación',nk.reduce((a,ch)=>a+nacList(pk,ch).length,0),inner);
+  }
+  h+=dudasCard(pk);
+  $('#body').innerHTML=h;
 }
-function renderLeg(pk){
-  const p=P[pk], c=p.leg.cam[S.st.cam];
-  $('#body').innerHTML = provHead(pk) + `<section class="zone"><h3>${/^legislatura/i.test(camClean(c.n))?'Legislatura (unicameral)':'Legislatura · '+esc(camClean(c.n))}</h3>
-    <dl class="info" style="margin:0 0 12px">${c.tot?`<dt>Bancas</dt><dd class="num">${c.tot}</dd>`:''}${c.tel?`<dt>Teléfono</dt><dd>${esc(c.tel)}</dd>`:''}${c.src?`<dt>Fuente</dt><dd>${srcLink(c.src)}</dd>`:''}</dl>
-    ${cnt(c.bl)?blocsHTML(c.bl):'<div class="empty">Sin legisladores LLA ni aliados con los filtros actuales.</div>'}${othersHTML(c.ot)}</section>${p.leg.dudas&&p.leg.dudas.length?`<section class="zone">${dudasHTML(p.leg.dudas)}</section>`:''}${p.leg.cx&&p.leg.cx.length?`<section class="zone">${ctxHTML(p.leg.cx)}</section>`:''}`;
+function intHTML(l){
+  return zoneH('int','Intendentes',l.length,`<ul class="rows">${l.map(x=>`<li class="row int" tabindex="0" data-mid="${x.mid}">${x.f?`<img class="av int-av" src="${esc(x.f)}" alt="Foto de ${esc(x.n)}" loading="lazy">`:`<span class="star-l" aria-hidden="true">${STAR}</span>`}<div class="lft"><div class="nm">${esc(x.n)} <span class="badge ${KB[x.k]}">${esc(KL[x.k])}</span></div><div class="meta">${esc(x.c)} de ${esc(x.mu)}${x.m?` · ${esc(x.m)}`:''}</div>${x.no?`<div class="meta">${esc(x.no)}</div>`:''}${x.s?`<div class="meta">Fuente: ${srcLink(x.s)}</div>`:''}</div>${I.chev}</li>`).join('')}</ul>`,'Intendentes de municipios gobernados por LLA. Los presidentes comunales están en <b>Comunas</b>.');
 }
-function renderProvNac(pk){
-  const ch=S.st.ch; const list=nacList(pk,ch);
-  $('#body').innerHTML = provHead(pk) + `<section class="zone"><h3>${ch==='dip'?'Diputados nacionales':'Senadores nacionales'} por ${esc(P[pk].name)}</h3>${list.length?blocsHTML(groupNac(list),false):'<div class="empty">Ninguno LLA o aliado con los filtros actuales.</div>'}</section>`;
-}
+function comHTML(p,cs){ if(!cs.length&&!p.revc) return ''; cs.sort((a,b)=>muniTot(b.id)-muniTot(a.id)||a.n.localeCompare(b.n,'es',{numeric:true})); const max=Math.max(1,...cs.map(m=>muniTot(m.id)));
+  return zoneH('com','Comunas y comisiones',cs.length,`${cs.length?`<ul class="rows">${cs.map(m=>{ const v=muniTot(m.id); return `<li class="row" tabindex="0" data-mid="${m.id}"><div class="lft"><div class="nm">${esc(m.n)}</div><div class="meta">${esc(m.cu||'Comuna')}</div></div><div class="bar"><i style="width:${Math.round(v/max*100)}%"></i></div><span class="val">${v}</span>${I.chev}</li>`; }).join('')}</ul>`:''}${p.revc?`<details class="ctx rev"><summary>Comunas revisadas sin LLA · ${p.revc.m.length}</summary><p class="sub" style="margin:8px 0">${linkify(p.revc.nota)}</p><p class="revl">${p.revc.m.map(esc).join(' · ')}</p></details>`:''}`,
+    p.name.startsWith('Ciudad')?'Juntas comunales de la Ciudad (7 miembros cada una, elegidas en 2023).':'Gobiernos de localidades chicas: comisiones comunales, de fomento o juntas de gobierno. No son concejos deliberantes.'); }
+function revHTML(p){ if(!p.rev||S.st.sec) return ''; return `<section class="zone"><details class="ctx rev"><summary>Revisados sin bloque LLA · ${p.rev.m.length}</summary><p class="sub" style="margin:8px 0">${linkify(p.rev.nota.charAt(0).toUpperCase()+p.rev.nota.slice(1))}</p><p class="revl">${p.rev.m.map(esc).join(' · ')}</p></details></section>`; }
 function groupNac(list){ const by={}; list.forEach(x=>{ (by[x.bl]=by[x.bl]||{b:x.bl,k:x.k,m:[]}).m.push(x); }); return Object.values(by); }
 function renderNacAll(){
-  const ch=S.st.ch; const list=[]; allProv().forEach(k=>nacList(k,ch).forEach(x=>list.push(x)));
-  list.sort((a,b)=>a.n.localeCompare(b.n));
-  const ot=(S.core.nac[ch==='dip'?'diputados':'senado']||{}).otros||[];
-  $('#body').innerHTML=`<section class="zone"><h2>Congreso Nacional</h2><p class="sub">${ch==='dip'?'Cámara de Diputados':'Senado'} · ${list.length} LLA y aliados. Elegí una provincia para ver solo sus representantes.</p></section>
+  const st=S.st, ch=st.ch; const list=[]; allProv().forEach(k=>nacList(k,ch).forEach(x=>list.push(x)));
+  const ot=S.core.nac[ch==='dip'?'diputados':'senado'].otros;
+  $('#body').innerHTML=`<section class="zone"><h2>${ch==='dip'?'Diputados':'Senadores'} nacionales</h2><p class="sub">${list.length} LLA y aliados en todo el país, por bloque.</p></section>
    <section class="zone">${list.length?blocsHTML(groupNac(list),true):'<div class="empty">Nadie con los filtros actuales.</div>'}${othersHTML(ot)}</section>`;
 }
 function renderMuni(id){
-  const m=S.munis[id], st=S.st, tab=st.mtab, es=ESTADO[m.es]||['','b-src'];
+  const m=S.munis[id], st=S.st, es=ESTADO[m.es]||['','b-src']; const ks=cargoKeys().filter(on);
   const qList=[]; m.bl.forEach(b=>b.m.forEach(x=>{ if(x.q) qList.push(x); }));
-  const ceN=m.ce?cnt(m.ce):0;
-  const tabs=[['conc','Concejo',cnt(m.bl),'']]; if(m.ce) tabs.push(['ce','Consejo escolar',ceN,'']); tabs.push(['du','Dudas',qList.length,'q']);
-  let h=`<section class="zone"><button type="button" class="back" data-back="1">${I.back}${m.pv==='buenos-aires'?(st.sec?st.sec+' sección':'Todos los municipios'):'Todas las ciudades de '+esc(P[m.pv].name)}</button>
-    <h2>${esc(m.n)}</h2><p class="sub">${esc(m.cu||'Concejo Deliberante')}${m.tot?` · ${m.tot} bancas`:''}${m.sec?` · ${esc(m.sec)} sección`:''} · <span class="badge ${es[1]}">${esc(es[0])}</span></p>
-    <dl class="info">${m.tel?`<dt>Teléfono</dt><dd><a href="tel:${esc(m.tel)}">${esc(m.tel)}</a></dd>`:''}${m.em?`<dt>Correo</dt><dd><a href="mailto:${esc(m.em)}">${esc(m.em)}</a></dd>`:''}${m.dir?`<dt>Dirección</dt><dd>${esc(m.dir)}</dd>`:''}${m.web?`<dt>Web</dt><dd>${srcLink(m.web)}</dd>`:''}${m.src&&m.src!==m.web?`<dt>Fuente</dt><dd>${srcLink(m.src)}</dd>`:''}</dl>${ctxHTML(m.cx)}</section>
-  <section class="zone"><div class="mtabs" role="tablist">${tabs.map(([v,t,n,c])=>`<button type="button" role="tab" data-mtab="${v}" aria-selected="${tab===v}">${t}<span class="n ${c}">${n}</span></button>`).join('')}</div>`;
-  if(tab==='ce' && m.ce){ h+= ceN?blocsHTML(m.ce):'<div class="empty">Sin consejeros con los filtros actuales.</div>'; h+=`<p class="sub" style="margin-top:8px">Consejeros electos por lista (Junta Electoral PBA); bloque actual no verificado.</p>`; }
-  else if(tab==='du'){ h+= qList.length?`<ul class="dlist">${qList.map(x=>`<li>${I.q}<div><b>${esc(x.n)}</b> — ${esc(x.qd||'No sabemos si sigue en el bloque LLA.')}</div></li>`).join('')}</ul>`:'<div class="empty">No hay personas a confirmar.</div>'; }
-  else { h+= cnt(m.bl)?blocsHTML(m.bl):`<div class="empty">${m.bl.length?'Nadie con los filtros actuales.':'Sin representantes LLA ni aliados relevados en este concejo.'}</div>`; h+=othersHTML(m.ot); }
-  $('#body').innerHTML=h+'</section>';
+  let h=`<section class="zone"><button type="button" class="back" data-back="1">${I.back}${m.pv==='buenos-aires'?(st.sec?st.sec+' sección':'Toda la provincia'):'Toda '+esc(P[m.pv].name)}</button>
+    <h2>${esc(m.n)}</h2><p class="sub">${esc(m.vi?'Municipio':(m.cu||'Concejo Deliberante'))}${m.tot?` · ${m.tot} bancas`:''}${m.sec?` · ${esc(m.sec)} sección`:''}${m.vi?'':` · <span class="badge ${es[1]}">${esc(es[0])}</span>`}</p>
+    <dl class="info">${m.tel?`<dt>Teléfono</dt><dd><a href="tel:${esc(m.tel)}">${esc(m.tel)}</a></dd>`:''}${m.em?`<dt>Correo</dt><dd><a href="mailto:${esc(m.em)}">${esc(m.em)}</a></dd>`:''}${m.dir?`<dt>Dirección</dt><dd>${esc(m.dir)}</dd>`:''}${m.web?`<dt>Web</dt><dd>${srcLink(m.web)}</dd>`:''}${m.src&&m.src!==m.web?`<dt>Fuente</dt><dd>${srcLink(m.src)}</dd>`:''}</dl>${ctxHTML(m.cx)}</section>`;
+  if(!S.cargo.size){ $('#body').innerHTML=h+noneHTML(); return; }
+  if(ks.includes('int') && m.int){ const x=m.int;
+    h+=zoneH('int',esc(x.c),null,blocsHTML([{b:'La Libertad Avanza',k:x.k,m:[{n:x.n,f:x.f,c:x.c+' de '+x.mu,m:x.m,s:x.s,no:x.no}]}])); }
+  const ck=m.tc?'com':'conc';
+  if(ks.includes(ck) && !m.vi){ h+=zoneH(ck,esc(m.cu||'Concejo Deliberante'),cnt(m.bl),(cnt(m.bl)?blocsHTML(m.bl):`<div class="empty">${m.bl.length?'Nadie con los filtros actuales.':'Sin representantes LLA ni aliados relevados.'}</div>`)+othersHTML(m.ot)); }
+  if(ks.includes('conc') && m.vi) h+=zoneH('conc','Concejo Deliberante',null,'<div class="empty">Revisado sin bloque LLA en el concejo.</div>');
+  if(ks.includes('ce') && m.ce){ const n=cnt(m.ce); h+=zoneH('ce','Consejo escolar',n,(n?blocsHTML(m.ce):'<div class="empty">Sin consejeros con los filtros actuales.</div>')+`<p class="sub" style="margin-top:8px">Electos por lista (Junta Electoral PBA). En 2025 la Alianza LLA sumó a LLA, el PRO y vecinales: salvo confirmación, no sabemos de qué partido es cada consejero.</p>`); }
+  if(qList.length && ks.includes(ck)) h+=zoneH('du','A confirmar',qList.length,`<ul class="dlist">${qList.map(x=>`<li>${I.q}<div><b>${esc(x.n)}</b> — ${esc(x.qd||'No sabemos si sigue en el bloque LLA.')}</div></li>`).join('')}</ul>`);
+  $('#body').innerHTML=h;
 }
 function othersHTML(ot){ if(!ot||!ot.length) return ''; return `<h3 style="margin-top:14px">Otros bloques (no relevados)</h3><div class="others">${ot.map(o=>`<span>${esc(o.bloque)}${o.bancas?` · ${o.bancas}`:''}</span>`).join('')}</div>`; }
 function ctxHTML(c){ if(!c||!c.length) return ''; return `<details class="ctx"><summary>Contexto y fuentes (${c.length})</summary><ul class="dlist">${c.map(x=>`<li>${I.info}<div>${linkify(x)}</div></li>`).join('')}</ul></details>`; }
@@ -452,14 +506,16 @@ function bindUI(){
     const ddb=e.target.closest('.dd-b'); if(ddb){ const d=ddb.closest('.dd'); if(ddb.getAttribute('aria-expanded')==='true') closeDD(); else openDD(d); return; }
     const li=e.target.closest('.dd-pop li[data-v]'); if(li){ chooseDD(li.closest('.dd'),li.dataset.v); return; }
     if(!e.target.closest('.dd')) closeDD();
+    if(e.target.closest('a[href^="http"]')) return;
     const sg=e.target.closest('[data-seg]'); if(sg){ const k=sg.dataset.seg, v=sg.dataset.v;
-      if(k==='view'){ if(v==='res'&&S.st.pk) set({view:defaultView(S.st.pk),sec:'',mid:'',cam:0,mtab:'conc'}); else set({view:v,sec:'',mid:'',cam:0,mtab:'conc',dt:''}); }
-      else if(k==='dt') set({dt:v}); else if(k==='cam') set({cam:+v}); else if(k==='ch') set({ch:v}); return; }
-    const mt=e.target.closest('[data-mtab]'); if(mt){ set({mtab:mt.dataset.mtab}); return; }
-    const ta=e.target.closest('[data-arg]'); if(ta){ go(S.st.view==='dudas'?'#/dudas/todas':S.st.view==='nac'?'#/nac/'+S.st.ch:'#/'); return; }
-    const bk=e.target.closest('[data-back]'); if(bk){ set({mid:'',mtab:'conc'}); return; }
+      if(k==='ch') set({ch:v}); return; }
+    const cc=e.target.closest('[data-c]'); if(cc){ const k=cc.dataset.c; if(S.cargo.has(k)) S.cargo.delete(k); else S.cargo.add(k); saveCargo(); render(); return; }
+    const ca=e.target.closest('[data-call]'); if(ca){ const ks=cargoKeys(); if(ca.dataset.call==='all') CK.forEach(k=>S.cargo.add(k)); else ks.forEach(k=>S.cargo.delete(k)); saveCargo(); render(); return; }
+    const so=e.target.closest('[data-solo]'); if(so){ S.cargo=new Set([so.dataset.solo]); saveCargo(); render(); return; }
+    const ta=e.target.closest('[data-arg]'); if(ta){ go(S.st.view==='dudas'&&S.st.pk?'#/dudas/todas':'#/'); return; }
+    const bk=e.target.closest('[data-back]'); if(bk){ set({mid:''}); return; }
     const pk=e.target.closest('[data-pk]'); if(pk){ pickProvince(pk.dataset.pk); return; }
-    const md=e.target.closest('[data-mid]'); if(md){ const m=S.munis[md.dataset.mid]; set({mid:m.id,sec:m.sec||'',mtab:'conc'}); return; }
+    const md=e.target.closest('[data-mid]'); if(md){ const m=S.munis[md.dataset.mid]; set({mid:m.id,sec:m.sec||''}); return; }
     const g=e.target.closest('[data-go]'); if(g){ go(g.dataset.go); return; }
     const lt=e.target.closest('.leg-t'); if(lt){ S.legOpen=!S.legOpen; const b=$('#legend .leg-b'); b.hidden=!S.legOpen; lt.setAttribute('aria-expanded',S.legOpen); $('#legend').classList.toggle('open',S.legOpen); return; }
     const c=e.target.closest('.chip'); if(c){ const k=c.dataset.k; S.filt[k]=!S.filt[k]; c.classList.toggle('on',S.filt[k]); c.setAttribute('aria-pressed',S.filt[k]); render(); return; }
@@ -481,7 +537,8 @@ function bindUI(){
 }
 function buildSearch(){
   const idx=[];
-  allProv().forEach(k=>{ const p=P[k]; idx.push({t:p.name,s:'Provincia',h:'#/p/'+k+'/'+defaultView(k),kind:'Provincia'});
+  allProv().forEach(k=>{ const p=P[k]; idx.push({t:p.name,s:'Provincia',h:'#/p/'+k,kind:'Provincia'});
+    (p.int||[]).forEach(x=>idx.push({t:x.n,s:`${x.c} de ${x.mu} · ${p.name}`,h:'#/p/'+x.mid.replace('/','/m/'),kind:KL[x.k]}));
     if(p.leg) p.leg.cam.forEach((c,i)=>c.bl.forEach(b=>b.m.forEach(x=>idx.push({t:x.n,s:`${b.b} · Legislatura (${camShort(c.n)}) · ${p.name}`,h:`#/p/${k}/leg/${i}`,kind:KL[b.k]}))));
     p.dip.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Diputado nacional · ${p.name}`,h:`#/p/${k}/nac/dip`,kind:KL[x.k]}));
     p.sen.forEach(x=>idx.push({t:x.n,s:`${x.bl} · Senador nacional · ${p.name}`,h:`#/p/${k}/nac/sen`,kind:KL[x.k]})); });
