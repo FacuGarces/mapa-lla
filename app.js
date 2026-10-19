@@ -26,7 +26,7 @@ const I = {
   disidente:'<svg class="ic s" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="6" r="2"/><path d="M6 8v8M18 8c0 4-6 4-6 8"/></svg>',
 };
 
-const S = { core:null, munis:null, prov:null, deptos:null, filt:{LLA:true,posible_aliado:true,disidente:true,q:false}, st:{}, snap:'peek' };
+const S = { core:null, munis:null, prov:null, deptos:null, filt:{LLA:true,posible_aliado:false,disidente:false,q:false}, st:{}, snap:'peek' };
 let P, map, bgLayer, provLayer, deptoLayer, markerLayer, lastFit=null;
 const DD = {};
 const isMobile = () => window.matchMedia('(max-width: 640px)').matches;

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="styles.css?v=55">
+<link rel="stylesheet" href="styles.css?v=56">
 </head>
 <body>
 <div id="map" aria-label="Mapa de Argentina"></div>
@@ -34,8 +34,8 @@
     <div class="filters" role="group" aria-label="Mostrar">
       <span class="fl">Mostrar</span>
       <button class="chip on" data-k="LLA" aria-pressed="true"><i class="dot lla"></i>LLA</button>
-      <button class="chip on" data-k="posible_aliado" aria-pressed="true"><i class="dot ali"></i>Aliados</button>
-      <button class="chip on" data-k="disidente" aria-pressed="true"><i class="dot dis"></i>Disidentes</button>
+      <button class="chip" data-k="posible_aliado" aria-pressed="false"><i class="dot ali"></i>Aliados</button>
+      <button class="chip" data-k="disidente" aria-pressed="false"><i class="dot dis"></i>Disidentes</button>
       <button class="chip q" data-k="q" aria-pressed="false"><svg class="ic s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"/></svg>Solo a confirmar</button>
     </div>
     <p class="src">Fuentes oficiales y prensa local. Solo contacto institucional.</p>
@@ -47,6 +47,6 @@
 <div id="tip" class="tip" role="tooltip" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="app.js?v=55"></script>
+<script src="app.js?v=56"></script>
 </body>
 </html>
